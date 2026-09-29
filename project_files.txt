@@ -1,0 +1,762 @@
+
+===== src/top.v =====
+module top (
+    input wire clk27,
+    input wire btn_n0,
+    output wire led
+);
+
+    blink blink_unit (
+        .clk(clk27),
+        .reset(~btn_n0),
+        .led(led)
+    );
+
+endmodule
+===== src/instruction_mem.v =====
+/*module instr_mem (
+    input wire [31:0] address,
+    output reg [31:0] instruction
+);
+
+    reg [31:0] memory [0:255];
+
+    always @(*) begin
+
+        case (address)
+
+            32'h00000000:
+                memory[0] = 32'h00A00093; // addi x1, x0, 10
+
+            32'h00000004:
+                memory[1] = 32'h00300113; // addi x2, x0, 3
+
+            32'h00000008:
+                memory[2] = 32'h002081B3; // add x3, x1, x2
+
+            32'h0000000C:
+                memory[3] = 32'h40208233; // sub x4, x1, x2
+
+            default:
+                memory[0] = 32'h00000013; // nop
+
+        endcase
+
+        instruction = memory[address >> 2];
+
+    end
+
+endmodule
+*/
+module instruction_mem (
+    input wire [31:0] address,
+    output reg [31:0] instruction
+);
+
+    always @(*) begin
+
+        case (address)
+
+            32'h00000000:
+                instruction = 32'h00A00093; // addi x1, x0, 10
+
+            32'h00000004:
+                instruction = 32'h00300113; // addi x2, x0, 3
+
+            32'h00000008:
+                instruction = 32'h002081B3; // add x3, x1, x2
+
+            32'h0000000C:
+                instruction = 32'h40208233; // sub x4, x1, x2
+
+            default:
+                instruction = 32'h00000013; // nop
+
+        endcase
+
+    end
+
+endmodule
+===== src/tang_primer_20k.cst =====
+IO_LOC "clk27" H11;
+IO_PORT "clk27" IO_TYPE=LVCMOS33;
+
+IO_LOC "btn_n0" T10;
+IO_PORT "btn_n0" IO_TYPE=LVCMOS33;
+
+IO_LOC "led" L16;
+IO_PORT "led" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+===== src/alu.v =====
+module alu (
+    input  wire [31:0] a,
+    input  wire [31:0] b,
+    input  wire [2:0]  operation,
+    output reg  [31:0] result
+);
+
+    always @(*) begin
+        case (operation)
+
+            3'b000: result = a + b;  // ADD
+            3'b001: result = a - b;  // SUB
+            3'b010: result = a & b;  // AND
+            3'b011: result = a | b;  // OR
+
+            default: result = 32'b0;
+
+        endcase
+    end
+
+endmodule
+===== src/riscv_cpu.v =====
+module riscv_cpu (
+    input wire clk,
+    input wire reset,
+    output wire [31:0] debug_x3
+);
+
+    wire [31:0] pc_address;
+    wire [31:0] instruction;
+
+    pc program_counter (
+        .clk(clk),
+        .reset(reset),
+        .address(pc_address)
+    );
+
+    instruction_mem instruction_memory (
+        .address(pc_address),
+        .instruction(instruction)
+    );
+
+    cpu_core core (
+        .clk(clk),
+        .reset(reset),
+        .instruction(instruction)
+    );
+
+    assign debug_x3 = core.register_file.registers[3];
+
+endmodule
+===== src/cpu_core.v =====
+module cpu_core (
+    input wire        clk,
+    input wire        reset,
+    input wire [31:0] instruction
+);
+
+    wire [4:0] rs1;
+    wire [4:0] rs2;
+    wire [4:0] rd;
+
+    wire [2:0] alu_operation;
+
+    wire write_enable;
+    wire use_immediate;
+
+    wire [31:0] data1;
+    wire [31:0] data2;
+
+    wire [31:0] immediate;
+    wire [31:0] alu_result;
+    wire [31:0] alu_b;
+
+    decoder decoder_unit (
+        .instruction(instruction),
+        .rs1(rs1),
+        .rs2(rs2),
+        .rd(rd),
+        .alu_operation(alu_operation),
+        .write_enable(write_enable),
+        .use_immediate(use_immediate)
+    );
+
+    imm_gen immediate_generator (
+        .instruction(instruction),
+        .immediate(immediate)
+    );
+
+    regfile register_file (
+        .clk(clk),
+        .reset(reset),
+        .rs1(rs1),
+        .rs2(rs2),
+        .data1(data1),
+        .data2(data2),
+        .rd(rd),
+        .write_data(alu_result),
+        .write_enable(write_enable)
+    );
+
+    assign alu_b = use_immediate ? immediate : data2;
+
+    alu alu_unit (
+        .a(data1),
+        .b(alu_b),
+        .operation(alu_operation),
+        .result(alu_result)
+    );
+
+endmodule
+===== src/pc.v =====
+module pc (
+    input wire        clk,
+    input wire        reset,
+    output reg [31:0] address
+);
+
+    always @(posedge clk) begin
+        if (reset)
+            address <= 32'd0;
+        else
+            address <= address + 32'd4;
+    end
+
+endmodule
+===== src/regfile.v =====
+module regfile (
+    input wire         clk,
+    input wire         reset,
+    input wire [4:0]   rs1,
+    input wire [4:0]   rs2,
+    output wire [31:0] data1,
+    output wire [31:0] data2,
+    input wire [4:0]   rd,
+    input wire [31:0]  write_data,
+    input wire         write_enable
+);
+
+    reg [31:0] registers [0:31];
+
+    integer i;
+
+    assign data1 = (rs1 == 5'd0) ? 32'd0 : registers[rs1];
+    assign data2 = (rs2 == 5'd0) ? 32'd0 : registers[rs2];
+
+    always @(posedge clk) begin
+        if (reset) begin
+            for (i = 0; i < 32; i = i + 1)
+                registers[i] <= 32'd0;
+        end
+        else begin
+            if (write_enable && (rd != 5'd0))
+                registers[rd] <= write_data;
+        end
+    end
+
+endmodule
+===== src/blink.v =====
+module blink (
+    input wire clk,
+    input wire reset,
+    output wire led
+);
+
+    reg [24:0] counter;
+
+    always @(posedge clk) begin
+        if (reset)
+            counter <= 25'd0;
+        else
+            counter <= counter + 1'b1;
+    end
+
+    assign led = counter[24];
+
+endmodule
+
+===== src/decoder.v =====
+module decoder (
+    input wire [31:0] instruction,
+
+    output wire [4:0] rs1,
+    output wire [4:0] rs2,
+    output wire [4:0] rd,
+
+    output reg [2:0] alu_operation,
+    output reg write_enable,
+    output reg use_immediate
+);
+
+    wire [6:0] opcode;
+    wire [2:0] funct3;
+    wire [6:0] funct7;
+
+    assign opcode = instruction[6:0];
+    assign rd     = instruction[11:7];
+    assign funct3 = instruction[14:12];
+    assign rs1    = instruction[19:15];
+    assign rs2    = instruction[24:20];
+    assign funct7 = instruction[31:25];
+
+    always @(*) begin
+
+        alu_operation = 3'b000;
+        write_enable  = 1'b0;
+        use_immediate = 1'b0;
+
+        case (opcode)
+
+            // R-type
+            7'b0110011: begin
+
+                write_enable = 1'b1;
+
+                case (funct3)
+
+                    3'b000: begin
+                        if (funct7 == 7'b0000000)
+                            alu_operation = 3'b000; // ADD
+                        else if (funct7 == 7'b0100000)
+                            alu_operation = 3'b001; // SUB
+                    end
+
+                    3'b111:
+                        alu_operation = 3'b010; // AND
+
+                    3'b110:
+                        alu_operation = 3'b011; // OR
+
+                    default:
+                        alu_operation = 3'b000;
+
+                endcase
+            end
+
+            // ADDI
+            7'b0010011: begin
+                write_enable  = 1'b1;
+                use_immediate = 1'b1;
+                alu_operation = 3'b000;
+            end
+
+            default: begin
+                write_enable  = 1'b0;
+            end
+
+        endcase
+    end
+
+endmodule
+===== src/imm_gen.v =====
+module imm_gen (
+    input wire [31:0] instruction,
+    output reg [31:0] immediate
+);
+
+    always @(*) begin
+
+        case (instruction[6:0])
+
+            // I-type
+            7'b0010011:
+                immediate = {{20{instruction[31]}},
+                            instruction[31:20]};
+
+            default:
+                immediate = 32'd0;
+
+        endcase
+
+    end
+
+endmodule
+===== src/datapath.v =====
+module datapath (
+    input wire        clk,
+
+    input wire [4:0]  rs1,
+    input wire [4:0]  rs2,
+    input wire [4:0]  rd,
+
+    input wire [2:0]  alu_operation,
+
+    input wire        write_enable,
+
+    input wire [31:0] external_write_data,
+    input wire        use_external_data
+);
+
+    wire [31:0] data1;
+    wire [31:0] data2;
+    wire [31:0] alu_result;
+    wire [31:0] write_data;
+
+    assign write_data =
+        use_external_data ? external_write_data : alu_result;
+
+    regfile registers (
+        .clk(clk),
+
+        .rs1(rs1),
+        .rs2(rs2),
+
+        .data1(data1),
+        .data2(data2),
+
+        .rd(rd),
+        .write_data(write_data),
+        .write_enable(write_enable)
+    );
+
+    alu arithmetic_logic_unit (
+        .a(data1),
+        .b(data2),
+        .operation(alu_operation),
+        .result(alu_result)
+    );
+
+endmodule
+===== tb/decoder_tb.v =====
+`timescale 1ns/1ps
+
+module decoder_tb;
+
+    reg [31:0] instruction;
+
+    wire [4:0] rs1;
+    wire [4:0] rs2;
+    wire [4:0] rd;
+
+    wire [2:0] alu_operation;
+
+    wire write_enable;
+
+    decoder uut (
+        .instruction(instruction),
+
+        .rs1(rs1),
+        .rs2(rs2),
+        .rd(rd),
+
+        .alu_operation(alu_operation),
+
+        .write_enable(write_enable)
+    );
+
+    initial begin
+
+        // add x3, x1, x2
+        instruction = 32'b0000000_00010_00001_000_00011_0110011;
+
+        #10;
+
+        $display("Instruction: ADD x3, x1, x2");
+        $display("rs1 = %d", rs1);
+        $display("rs2 = %d", rs2);
+        $display("rd  = %d", rd);
+        $display("ALU operation = %b", alu_operation);
+        $display("write enable = %b", write_enable);
+
+        $finish;
+
+    end
+
+endmodule
+===== tb/regfile_tb.v =====
+`timescale 1ns/1ps
+
+module regfile_tb;
+
+    reg clk;
+
+    reg [4:0] rs1;
+    reg [4:0] rs2;
+
+    wire [31:0] data1;
+    wire [31:0] data2;
+
+    reg [4:0] rd;
+    reg [31:0] write_data;
+    reg write_enable;
+
+    regfile uut (
+        .clk(clk),
+
+        .rs1(rs1),
+        .rs2(rs2),
+
+        .data1(data1),
+        .data2(data2),
+
+        .rd(rd),
+        .write_data(write_data),
+        .write_enable(write_enable)
+    );
+
+    // Clock: period = 10 ns
+    always #5 clk = ~clk;
+
+    initial begin
+
+        clk = 0;
+
+        rs1 = 0;
+        rs2 = 0;
+
+        rd = 0;
+        write_data = 0;
+        write_enable = 0;
+
+        // Write 10 to x1
+        #2;
+        rd = 5'd1;
+        write_data = 32'd10;
+        write_enable = 1;
+
+        #10;
+
+        // Write 3 to x2
+        rd = 5'd2;
+        write_data = 32'd3;
+
+        #10;
+
+        write_enable = 0;
+
+        // Read x1 and x2
+        rs1 = 5'd1;
+        rs2 = 5'd2;
+
+        #2;
+
+        $display("x1 = %d", data1);
+        $display("x2 = %d", data2);
+
+        // Try to write x0
+        rd = 5'd0;
+        write_data = 32'd123;
+        write_enable = 1;
+
+        #10;
+
+        write_enable = 0;
+
+        rs1 = 5'd0;
+
+        #2;
+
+        $display("x0 = %d", data1);
+
+        $finish;
+
+    end
+
+endmodule
+===== tb/alu_tb.v =====
+`timescale 1ns/1ps
+
+module alu_tb;
+
+    reg [31:0] a;
+    reg [31:0] b;
+    reg [2:0]  operation;
+
+    wire [31:0] result;
+
+    alu uut (
+        .a(a),
+        .b(b),
+        .operation(operation),
+        .result(result)
+    );
+
+    initial begin
+
+        // ADD
+        a = 10;
+        b = 3;
+        operation = 3'b000;
+
+        #10;
+        $display("ADD: %d", result);
+
+        // SUB
+        operation = 3'b001;
+
+        #10;
+        $display("SUB: %d", result);
+
+        // AND
+        operation = 3'b010;
+
+        #10;
+        $display("AND: %d", result);
+
+        // OR
+        operation = 3'b011;
+
+        #10;
+        $display("OR: %d", result);
+
+        $finish;
+
+    end
+
+endmodule
+===== tb/riscv_cpu_tb.v =====
+`timescale 1ns/1ps
+
+module riscv_cpu_tb;
+
+    reg clk;
+    reg reset;
+
+    wire [31:0] debug_x3;
+
+    riscv_cpu uut (
+        .clk(clk),
+        .reset(reset),
+        .debug_x3(debug_x3)
+    );
+
+    always #5 clk = ~clk;
+
+    initial begin
+        clk = 0;
+        reset = 1;
+
+        #20;
+
+        reset = 0;
+
+        #50;
+
+        $display("x3 = %d", debug_x3);
+
+        $finish;
+    end
+
+endmodule
+===== tb/datapath_tb.v =====
+`timescale 1ns/1ps
+
+module datapath_tb;
+
+    reg clk;
+
+    reg [4:0] rs1;
+    reg [4:0] rs2;
+    reg [4:0] rd;
+
+    reg [2:0] alu_operation;
+
+    reg write_enable;
+
+    reg [31:0] external_write_data;
+    reg use_external_data;
+
+    datapath uut (
+        .clk(clk),
+
+        .rs1(rs1),
+        .rs2(rs2),
+        .rd(rd),
+
+        .alu_operation(alu_operation),
+
+        .write_enable(write_enable),
+
+        .external_write_data(external_write_data),
+        .use_external_data(use_external_data)
+    );
+
+    always #5 clk = ~clk;
+
+    initial begin
+
+        clk = 0;
+
+        rs1 = 0;
+        rs2 = 0;
+        rd = 0;
+
+        alu_operation = 3'b000;
+
+        write_enable = 0;
+
+        external_write_data = 0;
+        use_external_data = 0;
+
+
+        // x1 = 10
+
+        rd = 5'd1;
+        external_write_data = 32'd10;
+        use_external_data = 1;
+        write_enable = 1;
+
+        #10;
+
+
+        // x2 = 3
+
+        rd = 5'd2;
+        external_write_data = 32'd3;
+
+        #10;
+
+
+        // x3 = x1 + x2
+
+        rs1 = 5'd1;
+        rs2 = 5'd2;
+
+        rd = 5'd3;
+
+        alu_operation = 3'b000;
+
+        use_external_data = 0;
+
+        #10;
+
+        write_enable = 0;
+
+
+        // Read x3
+
+        rs1 = 5'd3;
+
+        #2;
+
+        $display("x3 = %d", uut.registers.registers[3]);
+
+        $finish;
+
+    end
+
+endmodule
+===== tb/cpu_core_tb.v =====
+`timescale 1ns/1ps
+
+module cpu_core_tb;
+
+    reg clk;
+    reg [31:0] instruction;
+
+    cpu_core uut (
+        .clk(clk),
+        .instruction(instruction)
+    );
+
+    always #5 clk = ~clk;
+
+    initial begin
+
+        clk = 0;
+
+        // add x3, x1, x2
+        instruction = 32'h002081B3;
+
+        // Wait for one clock cycle
+        #10;
+
+        $display("x1 = %d", uut.register_file.registers[1]);
+        $display("x2 = %d", uut.register_file.registers[2]);
+        $display("x3 = %d", uut.register_file.registers[3]);
+
+        $finish;
+
+    end
+
+endmodule
