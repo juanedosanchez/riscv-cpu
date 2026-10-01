@@ -9,12 +9,12 @@ Continue development/debugging of:
 The project is a hand-built minimal RISC-V CPU in Verilog targeting a
 Sipeed Tang Primer 20K FPGA.
 
-Blink now builds, programs and runs on the FPGA. The SRAM programming
-hang is resolved (Dock DIP switch 1 was not down; see "Resolved: SRAM
-programming hang").
+**The CPU runs on the FPGA.** The hardcoded program computes
+`x3 = 13`, shown on four Dock LEDs (verified on hardware 2026-10-01).
+The earlier SRAM programming hang is resolved (Dock DIP switch 1 was
+not down; see "Resolved: SRAM programming hang").
 
-The immediate objective is **putting the RISC-V CPU on the FPGA** (see
-"Next CPU milestone").
+The next objectives are in "Next steps".
 
 Do not restart the project or redesign the CPU unless evidence requires
 it.
@@ -41,9 +41,9 @@ Board:
 Current constraints:
 
 ``` text
-clock H11
-button T10
-LED L16
+clock     H11
+button    T10 (S0, active-low)
+led[3:0]  N16 N14 L14 L16 (Dock LED2-LED5, active-low)
 ```
 
 Current CST:
@@ -55,9 +55,20 @@ IO_PORT "clk27" IO_TYPE=LVCMOS33;
 IO_LOC "btn_n0" T10;
 IO_PORT "btn_n0" IO_TYPE=LVCMOS33;
 
-IO_LOC "led" L16;
-IO_PORT "led" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+// Dock LEDs, same pins as Sipeed's TangPrimer-20K-example HDMI demo
+IO_LOC "led[0]" L16;
+IO_PORT "led[0]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "led[1]" L14;
+IO_PORT "led[1]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "led[2]" N14;
+IO_PORT "led[2]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "led[3]" N16;
+IO_PORT "led[3]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 ```
+
+LED pins match Sipeed's TangPrimer-20K-example HDMI demo. The Dock
+LEDs are **active-low** (verified on hardware: driving `x3[3:0] = 1101`
+directly lit only LED4). Dock LED0/LED1 (`C13`, `A13`) are not used.
 
 Apicula's device table explicitly identifies Tang Primer 20K as:
 
@@ -160,7 +171,7 @@ riscv-cpu/
 ```
 
 The GitHub tree contains `src/`, `tb/` and the top-level files above.
-`build/` (`blink.json`, `blink_pnr.json`, `blink.fs`) is a local output
+`build/` (`cpu.json`, `cpu_pnr.json`, `cpu.fs`) is a local output
 directory only: it is listed in `.gitignore` (as are `*.fs` and
 `*.json`) and is no longer tracked.
 
@@ -177,56 +188,54 @@ Use the actual files in `src/` and `tb/` as the source of truth.
 
 ### `src/top.v`
 
-Current FPGA top:
+FPGA top: instantiates `riscv_cpu` and shows `x3[3:0]` on four LEDs.
 
 ``` verilog
 module top (
     input wire clk27,
     input wire btn_n0,
-    output wire led
+    output wire [3:0] led
 );
 
-    blink blink_unit (
+    // Hold reset for 16 cycles after configuration, and while the
+    // button is pressed (btn_n0 is active-low).
+    reg [3:0] por_count = 4'd0;
+    wire      por_done  = &por_count;
+
+    always @(posedge clk27) begin
+        if (!por_done)
+            por_count <= por_count + 1'b1;
+    end
+
+    wire reset = ~btn_n0 | ~por_done;
+
+    wire [31:0] debug_x3;
+
+    riscv_cpu cpu (
         .clk(clk27),
-        .reset(~btn_n0),
-        .led(led)
+        .reset(reset),
+        .debug_x3(debug_x3)
     );
+
+    // Dock LEDs are active-low: invert so a lit LED means a 1 bit.
+    assign led = ~debug_x3[3:0];
 
 endmodule
 ```
 
-Important:
-
-**The FPGA top currently does NOT instantiate the RISC-V CPU.**
-
-It only instantiates `blink`.
-
-This is intentional: blink was used to debug the FPGA
-build/programming path, and it now runs on hardware. The next step is
-to replace it with the CPU.
+-   The CPU runs directly from the 27 MHz clock.
+-   Reset = 16-cycle power-on reset after configuration, or S0 held.
+-   `led = ~debug_x3[3:0]` because the LEDs are active-low, so a lit LED
+    means a 1 bit.
+-   On the board: LED2, LED3, LED5 lit and LED4 off (LED2 → LED5 =
+    `1101` = 13). With S0 held, all four are off.
 
 ### `src/blink.v`
 
-``` verilog
-module blink (
-    input wire clk,
-    input wire reset,
-    output wire led
-);
-
-    reg [24:0] counter;
-
-    always @(posedge clk) begin
-        if (reset)
-            counter <= 25'd0;
-        else
-            counter <= counter + 1'b1;
-    end
-
-    assign led = counter[24];
-
-endmodule
-```
+The earlier 25-bit-counter LED test used to debug the programming
+path. It is no longer instantiated or built; kept for reference. To
+use it again, restore the old `top.v` from git history (commit
+`b33ebcf` or earlier) and its single-LED CST entry.
 
 ### `src/pc.v`
 
@@ -381,14 +390,19 @@ unsupported xor that must not write x5) are also self-checking.
 That confirms the current basic instruction sequence works in
 simulation.
 
-Do not treat this as proof that the CPU is FPGA-ready. Hardware
-integration has not yet happened.
+`tb/top_tb.v` checks the FPGA top: LED pin levels `0010` after
+power-on reset (inverted `1101`), `1111` while the button is held, and
+`0010` again after release.
+
+The CPU has also been verified on hardware (x3 = 13 on the LEDs). Only
+`x3[3:0]` is observable on hardware; x1, x2 and x4 are verified in
+simulation only.
 
 ------------------------------------------------------------------------
 
 ## Current build script
 
-Current `build.sh` is:
+Current `build.sh` builds the CPU top into `build/cpu.fs`:
 
 ``` bash
 #!/bin/bash
@@ -398,21 +412,22 @@ set -e
 mkdir -p build
 
 yosys -p \
-"read_verilog src/blink.v src/top.v;
+"read_verilog src/pc.v src/instruction_mem.v src/decoder.v src/imm_gen.v \
+   src/regfile.v src/alu.v src/cpu_core.v src/riscv_cpu.v src/top.v;
  hierarchy -top top;
- synth_gowin -top top -json build/blink.json"
+ synth_gowin -top top -json build/cpu.json"
 
 ~/nextpnr/build/nextpnr-himbaechel \
   --device GW2A-LV18PG256C8/I7 \
   --vopt family=GW2A-18 \
   --vopt cst=src/tang_primer_20k.cst \
-  --json build/blink.json \
-  --write build/blink_pnr.json
+  --json build/cpu.json \
+  --write build/cpu_pnr.json
 
 gowin_pack \
   -d GW2A-18 \
-  -o build/blink.fs \
-  build/blink_pnr.json
+  -o build/cpu.fs \
+  build/cpu_pnr.json
 ```
 
 Note:
@@ -437,64 +452,15 @@ with the CST passed to nextpnr, not to gowin_pack.
 
 ## Build results
 
-The following stages have been successfully verified.
+`./build.sh` runs cleanly for the CPU top: Yosys, nextpnr ("Program
+finished normally") and gowin_pack all succeed, producing
+`build/cpu.fs` (about 4.4 MB).
 
-### Yosys
-
-Command:
-
-``` bash
-yosys -p \
-"read_verilog src/blink.v src/top.v;
- hierarchy -top top;
- synth_gowin -top top -json build/blink.json"
-```
-
-Succeeds.
-
-### nextpnr
-
-Command:
-
-``` bash
-~/nextpnr/build/nextpnr-himbaechel \
-  --device GW2A-LV18PG256C8/I7 \
-  --vopt family=GW2A-18 \
-  --vopt cst=src/tang_primer_20k.cst \
-  --json build/blink.json \
-  --write build/blink_pnr.json
-```
-
-Succeeds:
-
-``` text
-Info: Program finished normally.
-```
-
-### gowin_pack
-
-Command:
-
-``` bash
-gowin_pack \
-  -d GW2A-18 \
-  -o build/blink.fs \
-  build/blink_pnr.json
-```
-
-Succeeds.
-
-Generated file:
-
-``` text
-build/blink.fs
-```
-
-Size:
-
-``` text
-4.4M
-```
+Resource use is tiny (about 120 LUT4, 46 DFF, 6 IOB) and nextpnr
+reports roughly 400 MHz max frequency. That is expected: Yosys removes
+all logic that cannot affect the `x3[3:0]` LED outputs, keeping only
+the PC, the decoder/ALU path and the low 4 bits of x1-x3. Exposing more
+state (more LEDs, a UART) will make the design grow accordingly.
 
 ------------------------------------------------------------------------
 
@@ -587,9 +553,9 @@ Apicula has a historical Tang Primer 20K issue concerning clocked
 designs not running correctly on hardware after open-source
 synthesis/P&R.
 
-The 27 MHz blink design does run correctly on hardware, so this is not
-currently a problem. If a larger clocked design (such as the CPU)
-programs successfully (`Done Final`) but misbehaves, consider it then.
+The 27 MHz blink design and the CPU both run correctly on hardware, so
+this is not currently a problem. If a larger clocked design programs
+successfully (`Done Final`) but misbehaves, consider it then.
 
 ------------------------------------------------------------------------
 
@@ -636,48 +602,23 @@ Avoid these unless new evidence requires them:
 5.  Do not treat stale `project_files.txt` as the actual source tree.
 6.  Do not claim the FPGA is ready to program merely because JTAG
     IDCODE is detected.
-7.  Do not claim the CPU works on hardware; only simulation is currently
-    verified. Blink is the only design verified on hardware.
+7.  Do not overstate hardware verification: on hardware only
+    `x3[3:0] = 1101` has been observed. Everything else is verified in
+    simulation only.
+8.  Do not drive the Dock LEDs without inverting: they are active-low.
 
 ------------------------------------------------------------------------
 
-# Next CPU milestone
+# Next steps
 
-Blink loads and runs on the board, so:
+Done: the CPU runs on the FPGA with the existing instruction ROM, and
+the LEDs show `x3 = 13`.
 
-1.  Add three more LED pins to `src/tang_primer_20k.cst`. It currently
-    defines only one LED (`L16`); take the additional `IO_LOC` pins from
-    the Sipeed Tang Primer 20K Dock schematic (do not guess them).
-2.  Replace `top.v` so it instantiates `riscv_cpu`.
-3.  Expose `debug_x3[3:0]` to four LEDs.
-4.  Use the existing instruction ROM.
-5.  Reset CPU.
-6.  Verify:
-
-``` text
-x1 = 10
-x2 = 3
-x3 = 13
-x4 = 7
-```
-
-The four LEDs should show:
-
-``` text
-1101
-```
-
-for `x3`.
-
-Check whether the Dock LEDs are active-low. If they are, `1101` will
-display inverted (as `0010`) unless the LED outputs are inverted in
-`top.v`.
-
-After that:
+Possible next steps:
 
 -   clean up CPU reset behavior
--   create explicit LED/debug outputs
--   improve instruction memory
+-   create a deliberate LED/debug output path (e.g. select which
+    register drives the LEDs, or a UART dump) instead of hardwiring x3
 -   support more RV32I instructions
 -   move instruction memory toward initialized block RAM
 -   create an assembly-to-ROM workflow
@@ -725,5 +666,4 @@ hardware execution failure
 
 They are different problems.
 
-Current state: no open failure. Blink runs on hardware; the next
-milestone is the CPU on the FPGA.
+Current state: no open failure. The CPU runs on hardware.
