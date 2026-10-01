@@ -9,9 +9,12 @@ module riscv_cpu_tb;
 
     integer errors;
 
-    riscv_cpu uut (
+    riscv_cpu #(
+        .PROGRAM("build/basic.hex")
+    ) uut (
         .clk(clk),
         .reset(reset),
+        .leds(),
         .debug_x3(debug_x3)
     );
 
@@ -41,7 +44,7 @@ module riscv_cpu_tb;
 
         reset = 0;
 
-        // 4 instructions + margin (instruction ROM returns NOPs afterwards)
+        // 4 instructions + margin (programs/basic.S then loops in place)
         #50;
 
         check_reg(1, uut.core.register_file.registers[1], 32'd10);

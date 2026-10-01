@@ -1,4 +1,6 @@
-module top (
+module top #(
+    parameter PROGRAM = "build/program.hex"
+) (
     input wire clk27,
     input wire btn_n0,
     output wire [3:0] led
@@ -16,15 +18,18 @@ module top (
 
     wire reset = ~btn_n0 | ~por_done;
 
-    wire [31:0] debug_x3;
+    wire [3:0] cpu_leds;
 
-    riscv_cpu cpu (
+    riscv_cpu #(
+        .PROGRAM(PROGRAM)
+    ) cpu (
         .clk(clk27),
         .reset(reset),
-        .debug_x3(debug_x3)
+        .leds(cpu_leds),
+        .debug_x3()
     );
 
     // Dock LEDs are active-low: invert so a lit LED means a 1 bit.
-    assign led = ~debug_x3[3:0];
+    assign led = ~cpu_leds;
 
 endmodule

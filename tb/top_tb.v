@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
-// FPGA top: CPU result x3[3:0] on the active-low Dock LEDs.
-// led pins carry ~x3[3:0], so x3 = 13 (1101) drives 0010.
+// FPGA top running programs/rv32i_test.S. On pass the program writes 1111
+// to the LED register; the Dock LEDs are active-low, so the pins read 0000.
 module top_tb;
 
     reg clk = 0;
@@ -11,7 +11,9 @@ module top_tb;
 
     integer errors = 0;
 
-    top uut (
+    top #(
+        .PROGRAM("build/rv32i_test.hex")
+    ) uut (
         .clk27(clk),
         .btn_n0(btn_n0),
         .led(led)
@@ -31,18 +33,18 @@ module top_tb;
     endtask
 
     initial begin
-        // Power-on reset releases after 16 cycles, then the program runs.
-        #400;
-        check(4'b0010, "after power-on reset");
+        // Power-on reset (16 cycles), then the test program (~600 cycles).
+        #10000;
+        check(4'b0000, "test passed, all LEDs on");
 
-        // Button held: CPU in reset, x3 = 0, all LEDs off.
+        // Button held: CPU in reset, LED register cleared, all LEDs off.
         btn_n0 = 0;
         #50;
         check(4'b1111, "button held");
 
         btn_n0 = 1;
-        #200;
-        check(4'b0010, "button released");
+        #10000;
+        check(4'b0000, "rerun after release");
 
         if (errors == 0)
             $display("TOP TB: ALL TESTS PASSED");
