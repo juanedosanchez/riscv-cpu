@@ -19,5 +19,4 @@ yosys -p \
 gowin_pack \
   -d GW2A-18 \
   -o build/blink.fs \
-  -s src/tang_primer_20k.cst \
   build/blink_pnr.json
