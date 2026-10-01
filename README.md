@@ -6,12 +6,12 @@ the Sipeed Tang Primer 20K FPGA.
 ## Project status
 
 The CPU datapath currently supports a small instruction subset and has
-been simulated successfully. The FPGA build pipeline also works through
-bitstream generation.
+been simulated successfully. The full FPGA flow works end to end: the
+blink test design builds, programs into SRAM with openFPGALoader, and
+runs on the board.
 
-The current hardware blocker is **programming the generated `.fs`
-bitstream into the FPGA SRAM**: JTAG detection succeeds, but
-`openFPGALoader` hangs during `Erase SRAM`.
+The next step is putting the CPU itself on the FPGA (see "Next
+milestone" below).
 
 Current status:
 
@@ -24,7 +24,9 @@ Current status:
   gowin_pack                  Working
   `.fs` generation            Working
   FPGA JTAG detection         Working
-  FPGA SRAM programming       **Blocked: hangs at `Erase SRAM`**
+  FPGA SRAM programming       Working (Dock DIP switch 1 must be down)
+  Blink on hardware           Working
+  CPU on hardware             Not started
 
 ## Hardware
 
@@ -32,9 +34,12 @@ Current status:
 -   FPGA: `GW2A-LV18PG256C8/I7`
 -   Open-source flow family: `GW2A-18`
 -   Programmer board flag: `tangprimer20k`
--   JTAG interface: openFPGALoader sees an FT2232-compatible probe. The
-    Dock's on-board debugger is reportedly a BL702-based FT2232
-    emulator (unverified).
+-   JTAG interface: the Dock's on-board debugger enumerates as an
+    FT2232-compatible probe (USB `0403:6010`, manufacturer `SIPEED`,
+    product `JTAG Debugger`, serial `FactoryAIOT Pro`). It is reportedly
+    a BL702-based FT2232 emulator.
+-   **Dock DIP switch 1 must be down** (core board enabled) for
+    programming to work. See "Programming" below.
 -   Clock: 27 MHz
 -   Current LED output: `L16`
 -   Current reset button: `T10`
@@ -299,72 +304,63 @@ irlength     8
 
 The board is therefore visible over JTAG.
 
-The intended SRAM programming command is:
+SRAM programming command:
 
 ``` bash
 openFPGALoader -b tangprimer20k --write-sram build/blink.fs
 ```
 
-However, this currently hangs at:
+This works: the bitstream loads, the FPGA reports `Done Final`, and
+the blink LED on `L16` blinks on hardware (verified 2026-10-01).
 
-``` text
-Erase SRAM
-```
+### Requirement: Dock DIP switch 1 down
 
-Verbose output showed repeated:
+On the Tang Primer 20K Dock, **DIP switch 1 must be in the down
+position** (core board enabled). Sipeed's wiki documents this.
+
+With the switch up, JTAG detection still works (IDCODE and status
+registers read correctly), but programming hangs forever after
+`Erase SRAM` with repeated:
 
 ``` text
 pollFlag: 20 (0)
 ```
 
-Lowering JTAG frequency to 1 MHz and 500 kHz did not resolve it.
+### What the hang actually was
 
-The loader version currently used is:
+The hang was **not** in the SRAM erase itself. In openFPGALoader's
+Gowin code (`src/gowin.cpp`), `eraseSRAM()` first sends `CONFIG_ENABLE`
+(0x15) and waits for the "System Edit Mode" status bit (0x80).
+`pollFlag: 20 (0)` means status was `0x20` and `status & 0x80 == 0`:
+the FPGA was ignoring `CONFIG_ENABLE`. The erase command had not been
+sent yet.
 
-``` text
-openFPGALoader v1.1.1
-```
-
-The openFPGALoader troubleshooting documentation specifically has a Tang
-Primer 20K programming/stuck issue and recommends checking the loader
-version (see the openFPGALoader documentation's troubleshooting
-section).
-
-## Important debugging conclusion
-
-Do **not** assume the CPU Verilog is causing the current programming
-failure.
-
-The FPGA test design is only:
+A working load shows the edit-mode bit set straight away:
 
 ``` text
-27 MHz clock → 25-bit counter → LED
+pollFlag: 60a0 (80)
+after erase sram: displayReadReg 000000a0
+        Memory Erase
+        System Edit Mode
+...
+after program sram: displayReadReg 00006020
+        Memory Erase
+        Done Final
+        Security Final
 ```
 
-The design successfully passes:
+If programming hangs at `pollFlag: 20 (0)` again:
 
-``` text
-Yosys
-→ nextpnr
-→ gowin_pack
-```
+1.  Check DIP switch 1 is down.
+2.  Kill any stuck loader (`pkill openFPGALoader`), unplug USB for about
+    10 s, and plug it directly into the Mac (no hub).
+3.  Sipeed's recovery trick: start the load, and while it waits, flip
+    DIP switch 1 up and back down.
 
-and JTAG detection succeeds.
+Lowering the JTAG frequency does not help. Neither the bitstream nor
+the openFPGALoader version (v1.1.1) was the cause.
 
-The failure happens at SRAM erase/programming.
-
-A known Apicula example uses essentially the same open-source flow:
-
-``` bash
-yosys ...
-nextpnr-himbaechel ...
-gowin_pack ...
-openFPGALoader -b tangprimer20k ...
-```
-
-for the Tang Primer 20K.
-
-## Known dead ends
+## Debugging notes
 
 Do not repeat these without new evidence:
 
@@ -383,62 +379,26 @@ Do not repeat these without new evidence:
 
     This caused a speed-grade/database error.
 
-3.  Repeatedly lowering JTAG frequency.
+3.  Lowering JTAG frequency to fix a programming hang.
 
-    Tested down to 500 kHz; the SRAM erase still hung.
+    Tested down to 500 kHz; it made no difference. The real cause was
+    DIP switch 1.
 
 4.  Assuming `SecurityBit: ON` proves the bitstream is invalid.
 
-    Known Tang Primer programming logs also report `SecurityBit: ON`.
+    Known Tang Primer programming logs also report `SecurityBit: ON`,
+    and this project's bitstream loads fine with it.
 
-5.  Rebuilding the CPU datapath to solve the current programming hang.
+5.  Assuming JTAG detection proves the board is ready to program.
 
-    The hardware test currently uses `blink.v`, not the CPU.
+    IDCODE reads worked even while DIP switch 1 was up and programming
+    was impossible.
 
-6.  Assuming JTAG is completely broken.
+## Next milestone: CPU on the FPGA
 
-    The FPGA IDCODE is successfully read.
-
-## Recommended next debugging path
-
-The next agent should isolate **loader/hardware vs bitstream** before
-touching CPU logic.
-
-### Test A --- known-good external bitstream
-
-Build/program a known-good Tang Primer 20K blinky using the Apicula
-example flow.
-
-If that bitstream also hangs at:
-
-``` text
-Erase SRAM
-```
-
-the problem is likely outside this repository: programmer,
-FT2232-compatible probe communication, openFPGALoader version/build,
-board state, USB connection, or another hardware/software interaction.
-
-If the known-good bitstream programs successfully, compare its `.fs`
-generation and contents with this project's bitstream.
-
-### Test B --- inspect openFPGALoader behavior
-
-The exact failure is:
-
-``` text
-JTAG detection → successful
-FS parsing      → successful
-SRAM erase      → hangs
-```
-
-Investigate the `Memory Erase` / `pollFlag: 20` path in the installed
-openFPGALoader version and compare it with current upstream behavior.
-
-### Test C --- only after programming works
-
-Once the blink bitstream can actually be loaded, replace the FPGA top
-with the RISC-V CPU and expose a register/result on the LEDs.
+The blink bitstream programs and runs, so the next step is to replace
+the FPGA top with the RISC-V CPU and expose a register/result on the
+LEDs.
 
 A sensible first hardware CPU milestone is:
 

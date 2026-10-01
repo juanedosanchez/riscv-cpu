@@ -9,9 +9,12 @@ Continue development/debugging of:
 The project is a hand-built minimal RISC-V CPU in Verilog targeting a
 Sipeed Tang Primer 20K FPGA.
 
-The immediate objective is **not yet CPU functionality on hardware**.
-The immediate blocker is getting even a trivial blink design programmed
-into the FPGA using the open-source Gowin toolchain.
+Blink now builds, programs and runs on the FPGA. The SRAM programming
+hang is resolved (Dock DIP switch 1 was not down; see "Resolved: SRAM
+programming hang").
+
+The immediate objective is **putting the RISC-V CPU on the FPGA** (see
+"Next CPU milestone").
 
 Do not restart the project or redesign the CPU unless evidence requires
 it.
@@ -26,9 +29,13 @@ Board:
 -   FPGA: `GW2A-LV18PG256C8/I7`
 -   Gowin family used by Apicula/open-source flow: `GW2A-18`
 -   Programmer board flag: `tangprimer20k`
--   JTAG: openFPGALoader sees an FT2232-compatible probe. The Dock's
-    on-board debugger is reportedly a BL702-based FT2232 emulator
-    (unverified).
+-   JTAG: the Dock's on-board debugger enumerates as an FT2232-compatible
+    probe (USB `0403:6010`, manufacturer `SIPEED`, product
+    `JTAG Debugger`, serial `FactoryAIOT Pro`). It is reportedly a
+    BL702-based FT2232 emulator.
+-   **Dock DIP switch 1 must be down** (core board enabled). With it up,
+    JTAG detection still works but SRAM programming hangs. See
+    "Resolved: SRAM programming hang" below.
 -   Clock: 27 MHz
 
 Current constraints:
@@ -194,8 +201,9 @@ Important:
 
 It only instantiates `blink`.
 
-This is intentional: blink is being used to debug the FPGA
-build/programming path before putting the CPU on hardware.
+This is intentional: blink was used to debug the FPGA
+build/programming path, and it now runs on hardware. The next step is
+to replace it with the CPU.
 
 ### `src/blink.v`
 
@@ -490,112 +498,98 @@ Size:
 
 ------------------------------------------------------------------------
 
-# CURRENT BLOCKER
+# Resolved: SRAM programming hang
 
-## openFPGALoader hangs during SRAM erase
+## Symptom (before the fix)
 
-Programming command:
-
-``` bash
-openFPGALoader -b tangprimer20k --write-sram build/blink.fs
-```
-
-JTAG detection works.
-
-The loader sees:
+`openFPGALoader -b tangprimer20k --write-sram build/blink.fs` detected
+the FPGA (idcode 0x81b, GW2A(R)-18(C)), parsed the `.fs`, printed
+`Erase SRAM` and then looped forever on:
 
 ``` text
-idcode 0x81b
-manufacturer Gowin
-family GW2A
-model GW2A(R)-18(C)
-irlength 8
+pollFlag: 20 (0)
 ```
 
-The `.fs` file parses successfully.
+Lowering JTAG frequency (6 MHz, 1 MHz, 500 kHz) made no difference.
 
-Then programming reaches:
+## Root cause
+
+**Tang Primer 20K Dock DIP switch 1 was not down.** Switch 1 down
+enables the core board (documented on Sipeed's wiki). After setting it
+down, the same `build/blink.fs` loaded successfully and the LED on
+`L16` blinked on hardware (verified 2026-10-01).
+
+With the switch up, JTAG IDCODE and status reads still work, so
+`--detect` looks healthy, but configuration commands are ignored.
+
+## What the log meant
+
+From openFPGALoader's `src/gowin.cpp` (v1.1.1 / upstream master):
+
+-   `pollFlag(mask, value)` prints `pollFlag: <status> (<status & mask>)`
+    and loops until `(status & mask) == value`.
+-   `programSRAM()` → `eraseSRAM()` → `enableCfg()`. `enableCfg()` sends
+    `CONFIG_ENABLE` (0x15) and waits for `STATUS_SYSTEM_EDIT_MODE`
+    (0x80).
+-   `pollFlag: 20 (0)` = status 0x20, `0x20 & 0x80 = 0`: the FPGA never
+    entered edit mode. The erase command (0x05) had not been sent yet,
+    so the hang was **not** in the erase.
+
+A successful load looks like:
 
 ``` text
-Erase SRAM
-```
-
-and hangs.
-
-Verbose output included:
-
-``` text
-before program sram: displayReadReg 00000020
+pollFlag: 60a0 (80)
+after erase sram: displayReadReg 000000a0
         Memory Erase
-Erase SRAM before erase sram: displayReadReg 00000020
+        System Edit Mode
+Load SRAM: [==================================================] 100.00%
+after program sram: displayReadReg 00006020
         Memory Erase
-pollFlag: 20 (0)
-pollFlag: 20 (0)
-pollFlag: 20 (0)
-...
+        Done Final
+        Security Final
 ```
 
-The polling repeats indefinitely.
+## If it ever hangs at `pollFlag: 20 (0)` again
 
-The same behavior occurred at:
+1.  Check Dock DIP switch 1 is down.
+2.  `pkill openFPGALoader`, unplug USB for about 10 s, plug directly
+    into the Mac (no hub).
+3.  Sipeed's recovery trick: start the load and, while it waits, flip
+    DIP switch 1 up and back down.
+4.  Only then suspect the BL702 debugger firmware (openFPGALoader issue
+    #573 reports clone-firmware problems on this board; a real FTDI
+    probe on the JTAG header with `-c ft2232` is the workaround).
 
-``` text
-6 MHz
-1 MHz
-500 kHz
-```
-
-Changing JTAG frequency did not solve it.
-
-Direct FT2232 invocation also did not solve it.
-
-The board flag:
-
-``` bash
--b tangprimer20k
-```
-
-does detect the correct device.
+Not causes (ruled out): the bitstream (the hang happened before any
+bitstream data was sent, and the same file now loads), the
+openFPGALoader version (v1.1.1 is the latest release), and JTAG
+frequency.
 
 ------------------------------------------------------------------------
 
-## Important: SecurityBit is NOT currently considered the root cause
+## SecurityBit is not a problem
 
-The `.fs` parse output reported:
+The `.fs` parse output reports:
 
 ``` text
 SecurityBit: ON
 ```
 
-This was initially suspected.
-
-Do not pursue that assumption without new evidence.
-
-Known Tang Primer 20K programming logs also show `SecurityBit: ON`.
+This was initially suspected. It is not an issue: this project's
+bitstream loads and runs with it, and known Tang Primer 20K programming
+logs also show `SecurityBit: ON`.
 
 ------------------------------------------------------------------------
 
-## Important: clock issue is a separate issue
+## Clock issue: keep an eye on it
 
 Apicula has a historical Tang Primer 20K issue concerning clocked
 designs not running correctly on hardware after open-source
 synthesis/P&R.
 
-That issue is relevant later because this project uses the 27 MHz clock.
-
-However, it is **not the current observed failure**.
-
-The current failure happens before the design is successfully
-programmed:
-
-``` text
-JTAG detect → OK
-bitstream parse → OK
-SRAM erase → HANG
-```
-
-Therefore, do not use the clock-routing issue as an explanation for the
-current erase hang unless evidence connects the two.
+The 27 MHz blink design does run correctly on hardware, so this is not
+currently a problem. If a larger clocked design (such as the CPU)
+programs successfully (`Done Final`) but misbehaves, consider it then.
 
 ------------------------------------------------------------------------
 
@@ -620,7 +614,7 @@ openFPGALoader \
   pack.fs
 ```
 
-This reference is important because it closely matches this project.
+This project's `build.sh` now matches it.
 
 Sources:
 
@@ -630,109 +624,26 @@ Sources:
 
 ------------------------------------------------------------------------
 
-# Recommended debugging sequence
-
-Do not immediately modify CPU logic.
-
-The cleanest next experiment is to separate:
-
-``` text
-project bitstream problem
-```
-
-from:
-
-``` text
-openFPGALoader / FT2232-compatible probe / board / hardware problem
-```
-
-## Step 1 --- use a known-good Tang Primer bitstream
-
-Build a minimal known-good Apicula Tang Primer 20K blinky using the
-exact documented flow.
-
-Try programming that `.fs` with:
-
-``` bash
-openFPGALoader -b tangprimer20k --write-sram <known-good.fs>
-```
-
-Interpretation:
-
-### If known-good also hangs at `Erase SRAM`
-
-Focus on:
-
--   openFPGALoader v1.1.1
--   FT2232-compatible probe communication
--   macOS/libusb interaction
--   USB cable/port
--   board power/reset/JTAG state
--   current upstream openFPGALoader behavior
--   possible need to update/rebuild openFPGALoader
-
-Do NOT keep changing this project's Verilog.
-
-### If known-good programs successfully
-
-Then the programming stack is functional.
-
-Compare:
-
--   `.fs` generation
--   bitstream header
--   family selection
--   pack arguments
--   design configuration
--   any configuration/security fields
-
-between the known-good bitstream and this project.
-
-------------------------------------------------------------------------
-
-# openFPGALoader version
-
-Current:
-
-``` text
-openFPGALoader v1.1.1
-```
-
-The official troubleshooting documentation explicitly mentions Tang
-Primer 20K programming getting stuck and recommends checking the
-openFPGALoader version.
-
-Therefore, checking whether the installed version is current is a valid
-next step.
-
-Do not assume "JTAG detection works" means the programming path is
-healthy. Detection and SRAM programming exercise different parts of the
-interface.
-
-------------------------------------------------------------------------
-
 # What NOT to do
 
 Avoid these unless new evidence requires them:
 
 1.  Do not change the FPGA family to `GW2A-18C`.
 2.  Do not use `--device GW2A-18C`.
-3.  Do not rebuild the entire CPU to solve the SRAM erase hang.
-4.  Do not keep changing JTAG frequency randomly.
-5.  Do not assume `SecurityBit: ON` is the problem.
-6.  Do not start loading the RISC-V CPU onto the FPGA before the trivial
-    blink bitstream can be programmed.
-7.  Do not treat stale `project_files.txt` as the actual source tree.
-8.  Do not claim the FPGA hardware works merely because JTAG IDCODE is
-    detected.
-9.  Do not claim the CPU works on hardware; only simulation is currently
-    verified.
+3.  Do not change JTAG frequency to fix a programming hang; check DIP
+    switch 1 first.
+4.  Do not assume `SecurityBit: ON` is the problem.
+5.  Do not treat stale `project_files.txt` as the actual source tree.
+6.  Do not claim the FPGA is ready to program merely because JTAG
+    IDCODE is detected.
+7.  Do not claim the CPU works on hardware; only simulation is currently
+    verified. Blink is the only design verified on hardware.
 
 ------------------------------------------------------------------------
 
-# Next CPU milestone after FPGA programming works
+# Next CPU milestone
 
-Once `blink.fs` successfully loads:
+Blink loads and runs on the board, so:
 
 1.  Add three more LED pins to `src/tang_primer_20k.cst`. It currently
     defines only one LED (`L16`); take the additional `IO_LOC` pins from
@@ -814,8 +725,5 @@ hardware execution failure
 
 They are different problems.
 
-Current failure category:
-
-``` text
-SRAM programming failure
-```
+Current state: no open failure. Blink runs on hardware; the next
+milestone is the CPU on the FPGA.
