@@ -7,12 +7,16 @@ module regfile (
     output wire [31:0] data2,
     input wire [4:0]   rd,
     input wire [31:0]  write_data,
-    input wire         write_enable
+    input wire         write_enable,
+    output wire [31:0] debug_x3
 );
 
     reg [31:0] registers [0:31];
 
     integer i;
+
+    // Deliberate debug output (synthesizable; replaces hierarchical access).
+    assign debug_x3 = registers[3];
 
     assign data1 = (rs1 == 5'd0) ? 32'd0 : registers[rs1];
     assign data2 = (rs2 == 5'd0) ? 32'd0 : registers[rs2];

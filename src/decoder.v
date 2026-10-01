@@ -29,37 +29,70 @@ module decoder (
 
         case (opcode)
 
-            // R-type
+            // R-type: only ADD, SUB, AND, OR are supported.
+            // Anything else (unsupported funct3 or funct7) does not write back.
             7'b0110011: begin
-
-                write_enable = 1'b1;
 
                 case (funct3)
 
                     3'b000: begin
-                        if (funct7 == 7'b0000000)
+                        if (funct7 == 7'b0000000) begin
                             alu_operation = 3'b000; // ADD
-                        else if (funct7 == 7'b0100000)
+                            write_enable  = 1'b1;
+                        end
+                        else if (funct7 == 7'b0100000) begin
                             alu_operation = 3'b001; // SUB
+                            write_enable  = 1'b1;
+                        end
                     end
 
-                    3'b111:
-                        alu_operation = 3'b010; // AND
+                    3'b111: begin
+                        if (funct7 == 7'b0000000) begin
+                            alu_operation = 3'b010; // AND
+                            write_enable  = 1'b1;
+                        end
+                    end
 
-                    3'b110:
-                        alu_operation = 3'b011; // OR
+                    3'b110: begin
+                        if (funct7 == 7'b0000000) begin
+                            alu_operation = 3'b011; // OR
+                            write_enable  = 1'b1;
+                        end
+                    end
 
                     default:
-                        alu_operation = 3'b000;
+                        write_enable = 1'b0;
 
                 endcase
             end
 
-            // ADDI
+            // I-type arithmetic: only ADDI, ANDI, ORI are supported.
+            // Other funct3 values (SLTI, XORI, shifts, ...) do not write back.
             7'b0010011: begin
-                write_enable  = 1'b1;
+
                 use_immediate = 1'b1;
-                alu_operation = 3'b000;
+
+                case (funct3)
+
+                    3'b000: begin
+                        alu_operation = 3'b000; // ADDI
+                        write_enable  = 1'b1;
+                    end
+
+                    3'b111: begin
+                        alu_operation = 3'b010; // ANDI
+                        write_enable  = 1'b1;
+                    end
+
+                    3'b110: begin
+                        alu_operation = 3'b011; // ORI
+                        write_enable  = 1'b1;
+                    end
+
+                    default:
+                        write_enable = 1'b0;
+
+                endcase
             end
 
             default: begin

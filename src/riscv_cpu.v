@@ -21,9 +21,8 @@ module riscv_cpu (
     cpu_core core (
         .clk(clk),
         .reset(reset),
-        .instruction(instruction)
+        .instruction(instruction),
+        .debug_x3(debug_x3)
     );
-
-    assign debug_x3 = core.register_file.registers[3];
 
 endmodule

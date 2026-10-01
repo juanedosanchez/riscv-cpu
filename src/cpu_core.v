@@ -1,7 +1,8 @@
 module cpu_core (
     input wire        clk,
     input wire        reset,
-    input wire [31:0] instruction
+    input wire [31:0] instruction,
+    output wire [31:0] debug_x3
 );
 
     wire [4:0] rs1;
@@ -44,7 +45,8 @@ module cpu_core (
         .data2(data2),
         .rd(rd),
         .write_data(alu_result),
-        .write_enable(write_enable)
+        .write_enable(write_enable),
+        .debug_x3(debug_x3)
     );
 
     assign alu_b = use_immediate ? immediate : data2;
