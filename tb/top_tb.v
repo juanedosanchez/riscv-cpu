@@ -11,12 +11,16 @@ module top_tb;
 
     integer errors = 0;
 
+    // Start directly in RAM (the bootloader is tested by boot_tb)
     top #(
-        .PROGRAM("build/rv32i_test.hex")
+        .PROGRAM("build/rv32i_test"),
+        .RESET_PC(32'd0)
     ) uut (
         .clk27(clk),
         .btn_n0(btn_n0),
-        .led(led)
+        .led(led),
+        .uart_tx(),
+        .uart_rx(1'b1)
     );
 
     always #5 clk = ~clk;
@@ -33,7 +37,7 @@ module top_tb;
     endtask
 
     initial begin
-        // Power-on reset (16 cycles), then the test program (~600 cycles).
+        // Power-on reset (16 cycles), then the test program (~350 cycles).
         #10000;
         check(4'b0000, "test passed, all LEDs on");
 

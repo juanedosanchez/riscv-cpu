@@ -1,9 +1,14 @@
 module top #(
-    parameter PROGRAM = "build/program.hex"
+    parameter PROGRAM      = "build/program",
+    parameter BOOT_PROGRAM = "build/boot.hex",
+    parameter RESET_PC     = 32'h0001_0000,
+    parameter CLKS_PER_BIT = 234
 ) (
     input wire clk27,
     input wire btn_n0,
-    output wire [3:0] led
+    output wire [3:0] led,
+    output wire uart_tx,
+    input wire uart_rx
 );
 
     // Hold reset for 16 cycles after configuration, and while the
@@ -21,11 +26,16 @@ module top #(
     wire [3:0] cpu_leds;
 
     riscv_cpu #(
-        .PROGRAM(PROGRAM)
+        .PROGRAM(PROGRAM),
+        .BOOT_PROGRAM(BOOT_PROGRAM),
+        .RESET_PC(RESET_PC),
+        .CLKS_PER_BIT(CLKS_PER_BIT)
     ) cpu (
         .clk(clk27),
         .reset(reset),
         .leds(cpu_leds),
+        .uart_tx(uart_tx),
+        .uart_rx(uart_rx),
         .debug_x3()
     );
 

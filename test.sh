@@ -1,16 +1,18 @@
 #!/bin/bash
-# Assemble the test programs and run every testbench in tb/.
+# Build the test programs and run every testbench in tb/.
 # Exits non-zero if any testbench reports FAIL or doesn't finish.
 
 set -e
 
 mkdir -p build
 
-tools/asm2hex.py programs/basic.S      build/basic.hex      > /dev/null
-tools/asm2hex.py programs/rv32i_test.S build/rv32i_test.hex > /dev/null
+tools/mkprog.py --boot -o build/boot programs/boot.S        > /dev/null
+tools/mkprog.py -o build/basic      programs/basic.S         > /dev/null
+tools/mkprog.py -o build/rv32i_test programs/rv32i_test.S    > /dev/null
+tools/mkprog.py -o build/hello      programs/hello.c         > /dev/null
 
-SOURCES="src/pc.v src/instruction_mem.v src/data_mem.v src/decoder.v
-         src/imm_gen.v src/regfile.v src/alu.v src/cpu_core.v
+SOURCES="src/pc.v src/main_mem.v src/boot_rom.v src/uart_tx.v src/uart_rx.v
+         src/decoder.v src/imm_gen.v src/regfile.v src/alu.v src/cpu_core.v
          src/riscv_cpu.v src/top.v"
 
 failed=0

@@ -11,7 +11,6 @@
 #   fail -> the failing check number (low 4 bits) blinks on the LEDs
 
     .equ LED_ADDR, 0x10000000
-    .equ RAM_BASE, 0x00010000
 
 # Check that \reg == \value
 .macro CHECK reg, value
@@ -40,7 +39,9 @@
     \op  \ra, \rb, fail
 .endm
 
-start:
+    .text
+    .globl main
+main:
     li   t6, 0
     li   t5, 0
 
@@ -120,7 +121,7 @@ start:
     CHECK a3, -4
 
 # ---- Loads and stores --------------------------------------------------
-    li   s0, RAM_BASE
+    la   s0, scratch
     li   a1, 0x89ABCDEF
     sw   a1, 0(s0)
 
@@ -239,3 +240,8 @@ delay:
     addi t3, t3, -1
     bnez t3, 1b
     ret
+
+    .bss
+    .balign 4
+scratch:
+    .space 16

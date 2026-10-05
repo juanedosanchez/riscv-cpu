@@ -13,11 +13,14 @@ module rv32i_tb;
     integer cycles;
 
     riscv_cpu #(
-        .PROGRAM("build/rv32i_test.hex")
+        .PROGRAM("build/rv32i_test"),
+        .RESET_PC(32'd0)
     ) uut (
         .clk(clk),
         .reset(reset),
         .leds(leds),
+        .uart_tx(),
+        .uart_rx(1'b1),
         .debug_x3()
     );
 

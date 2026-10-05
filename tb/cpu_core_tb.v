@@ -14,6 +14,7 @@ module cpu_core_tb;
     wire [31:0] mem_address;
     wire [31:0] mem_write_data;
     wire [3:0]  mem_write_strobe;
+    wire        mem_read_done;
     wire [31:0] debug_x3;
 
     integer errors;
@@ -28,6 +29,7 @@ module cpu_core_tb;
         .mem_write_data(mem_write_data),
         .mem_write_strobe(mem_write_strobe),
         .mem_read_data(mem_read_data),
+        .mem_read_done(mem_read_done),
         .debug_x3(debug_x3)
     );
 
@@ -109,9 +111,19 @@ module cpu_core_tb;
         check("sb strobe",  {28'd0, mem_write_strobe}, 32'b1000);
         check("sb data",    mem_write_data, 32'h03030303);
 
-        // Load: lb x7, 1(x0) with memory word 0x0000_8000 -> byte 0x80 sign-extended
+        // Load: lb x7, 1(x0) with memory word 0x0000_8000 -> byte 0x80
+        // sign-extended. Loads take two cycles: the first holds the PC and
+        // must not write back, the second writes back and advances.
         mem_read_data = 32'h00008000;
         instruction   = 32'h00100383;
+        #1;
+        check("load cycle 1 holds pc", next_pc, 32'h100);
+        check("load cycle 1 not done", {31'd0, mem_read_done}, 32'd0);
+        @(posedge clk);
+        #1;
+        check("load cycle 1 no write", uut.register_file.registers[7], 32'd0);
+        check("load cycle 2 advances", next_pc, 32'h104);
+        check("load cycle 2 done", {31'd0, mem_read_done}, 32'd1);
         @(posedge clk);
         #1;
         check("lb sign-extend", uut.register_file.registers[7], 32'hFFFFFF80);

@@ -9,13 +9,18 @@ Continue development/debugging of:
 The project is a hand-built minimal RISC-V CPU in Verilog targeting a
 Sipeed Tang Primer 20K FPGA.
 
-**A single-cycle RV32I CPU runs on the FPGA at 27 MHz.** Programs are
-written in RISC-V assembly (`programs/*.S`), assembled with LLVM into
-the instruction ROM, and built into the bitstream. The self-checking
-`programs/rv32i_test.S` (57 checks, every instruction class) passes in
-simulation and on hardware (all four LEDs steady on, verified
-2026-10-01). The earlier SRAM programming hang is resolved (Dock DIP
-switch 1 was not down; see "Resolved: SRAM programming hang").
+**An RV32I CPU runs on the FPGA at 27 MHz** with a 16 KB main RAM, a
+1 KB boot ROM holding a UART bootloader, a UART (115200 8N1) and four
+LEDs. Programs are written in C or assembly, linked with `ld.lld`
+(from Zig) into RAM images, and either preloaded in the bitstream or
+uploaded over UART with `tools/upload.py` without rebuilding.
+
+Verified on hardware 2026-10-05 with the current design: bootloader
+prints `RVBOOT`, `upload.py programs/hello.c` uploads (reply `K`),
+`hello.c` prints correct output (including software mul/div) and
+echoes typed characters. `rv32i_test.S` (57 checks) passes in
+simulation with the current design; on hardware it was verified only
+with the previous design (2026-10-01, 4 KB ROM, no UART).
 
 The next objectives are in "Next steps".
 
@@ -36,6 +41,9 @@ Board:
     probe (USB `0403:6010`, manufacturer `SIPEED`, product
     `JTAG Debugger`, serial `FactoryAIOT Pro`). It is reportedly a
     BL702-based FT2232 emulator.
+-   Serial ports on macOS: `/dev/cu.usbserial-14200` (JTAG channel) and
+    `/dev/cu.usbserial-14201` (UART channel; numbers depend on the USB
+    port). `upload.py` picks the highest-numbered one.
 -   **Dock DIP switch 1 must be down** (core board enabled). With it up,
     JTAG detection still works but SRAM programming hangs. See
     "Resolved: SRAM programming hang" below.
@@ -47,31 +55,14 @@ Current constraints:
 clock     H11
 button    T10 (S0, active-low)
 led[3:0]  N16 N14 L14 L16 (Dock LED2-LED5, active-low)
+uart_tx   M11 (FPGA -> host)
+uart_rx   T13 (host -> FPGA)
 ```
 
-Current CST:
-
-``` text
-IO_LOC "clk27" H11;
-IO_PORT "clk27" IO_TYPE=LVCMOS33;
-
-IO_LOC "btn_n0" T10;
-IO_PORT "btn_n0" IO_TYPE=LVCMOS33;
-
-// Dock LEDs, same pins as Sipeed's TangPrimer-20K-example HDMI demo
-IO_LOC "led[0]" L16;
-IO_PORT "led[0]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
-IO_LOC "led[1]" L14;
-IO_PORT "led[1]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
-IO_LOC "led[2]" N14;
-IO_PORT "led[2]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
-IO_LOC "led[3]" N16;
-IO_PORT "led[3]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
-```
-
-LED pins match Sipeed's TangPrimer-20K-example HDMI demo. The Dock
-LEDs are **active-low** (verified on hardware: driving `x3[3:0] = 1101`
-directly lit only LED4). Dock LED0/LED1 (`C13`, `A13`) are not used.
+LED pins match Sipeed's TangPrimer-20K-example HDMI demo; UART pins
+match its UART demo. The Dock LEDs are **active-low** (verified on
+hardware: driving `x3[3:0] = 1101` directly lit only LED4). Dock
+LED0/LED1 (`C13`, `A13`) are not used. See `src/tang_primer_20k.cst`.
 
 Apicula's device table explicitly identifies Tang Primer 20K as:
 
@@ -101,12 +92,17 @@ Tools:
 -   Yosys
 -   Python 3.14.6
 -   Apycula 0.33
--   Homebrew LLVM 22.1.8 (`llvm-mc`, `llvm-objcopy`, `llvm-objdump`;
-    RISC-V target included). There is no `ld.lld`, so programs are
-    assembled without a linker.
+-   Homebrew LLVM 22.1.8 (`clang`, `llvm-objcopy`, `llvm-size`,
+    `llvm-mc`, `llvm-objdump`; RISC-V target included). Homebrew LLVM
+    has no `ld.lld`.
+-   Zig 0.16.0 unpacked in `~/tools/zig-x86_64-macos-0.16.0`, used only
+    for `zig ld.lld`. `tools/mkprog.py` finds it automatically
+    (`$LD_LLD` overrides).
 -   `gowin_pack`
 -   openFPGALoader v1.1.1
--   nextpnr-himbaechel built locally
+-   nextpnr-himbaechel built locally (not on `PATH`)
+-   No `timeout` command on this Mac: guard long-running loader calls
+    another way.
 
 nextpnr location:
 
@@ -133,23 +129,6 @@ cmake . -B build \
 cmake --build build -j$(sysctl -n hw.ncpu)
 ```
 
-A direct nextpnr test succeeded:
-
-``` bash
-cd ~/nextpnr
-
-build/nextpnr-himbaechel \
-  --device GW2A-LV18PG256C8/I7 \
-  --vopt family=GW2A-18 \
-  --test
-```
-
-Result:
-
-``` text
-Program finished normally.
-```
-
 ------------------------------------------------------------------------
 
 ## Repository state
@@ -159,7 +138,8 @@ GitHub repository:
 https://github.com/juanedosanchez/riscv-cpu
 
 The repository is public. The GitHub repository is named `riscv-cpu`;
-the local clone folder is named `riscv-cpu-tang`.
+the local clone folder is named `riscv-cpu-tang`
+(`~/Documents/Proyectos/riscv-cpu-tang`).
 
 Current top-level structure:
 
@@ -170,19 +150,21 @@ riscv-cpu/
 ├── .gitignore
 ├── all_files.txt
 ├── project_files.txt
-├── build.sh        assemble a program + build build/cpu.fs
-├── test.sh         assemble test programs + run all testbenches
+├── compile_flags.txt  clangd flags for sw/ and programs/*.c
+├── build.sh        build bootloader + preloaded program + build/cpu.fs
+├── test.sh         build test programs + run all testbenches
 ├── build/          (generated; gitignored, not on GitHub)
-├── programs/       RISC-V assembly programs (.S)
-├── tools/          asm2hex.py
+├── programs/       C and assembly programs, plus boot.S (bootloader)
+├── sw/             crt0, runtime, rvcpu.h, linker scripts
+├── tools/          mkprog.py, upload.py
 ├── src/            Verilog
 └── tb/             testbenches
 ```
 
-The GitHub tree contains everything above except `build/`. `build/`
-(`*.hex`, `cpu.json`, `cpu_pnr.json`, `cpu.fs`, `*.vvp`) is a local
-output directory only: it is listed in `.gitignore` (as are `*.fs` and
-`*.json`).
+`build/` is a local output directory only (gitignored, as are `*.fs`,
+`*.json` and `__pycache__/`). It may still contain stale `*.hex` files
+from the old `asm2hex.py` flow; the current flow writes
+`*.lane0..3.hex` (RAM) and `boot.hex` (boot ROM).
 
 Important:
 
@@ -195,31 +177,51 @@ Use the actual files in `src/` and `tb/` as the source of truth.
 
 ## Current source architecture
 
-Single-cycle RV32I. One instruction per 27 MHz cycle.
+RV32I. One instruction per 27 MHz cycle, except loads (two cycles).
 
 ### Memory map (`src/riscv_cpu.v`)
 
 | Address | Size | Contents |
 |---|---|---|
-| `0x0000_0000` | 4 KB | Instruction ROM (fetch only; loads cannot read it) |
-| `0x0001_0000` | 1 KB | Data RAM (mirrored across `0x0001_xxxx`) |
+| `0x0000_0000` | 16 KB | Main RAM: code, data, stack (mirrored across `0x0000_xxxx`) |
+| `0x0001_0000` | 1 KB | Boot ROM (fetch only; loads cannot read it) |
 | `0x1000_0000` | 1 word | LED register, bits `[3:0]`, read/write |
+| `0x1000_0004` | 1 word | UART data: write sends a byte, read takes the received byte |
+| `0x1000_0008` | 1 word | UART status: bit 0 TX ready, bit 1 RX byte available |
 
-Other addresses read 0 and ignore writes.
+Reset PC is `0x0001_0000` (`RESET_PC` parameter). Other addresses read
+0 and ignore writes. I/O registers decode on `mem_address[31:28] == 1`
+and `mem_address[3:2]`, so they are mirrored within `0x1xxx_xxxx`.
 
 ### Modules
 
 -   `src/top.v`: FPGA top. 16-cycle power-on reset plus S0 (`btn_n0`,
-    active-low). Instantiates `riscv_cpu` and drives
-    `led = ~leds` (Dock LEDs are active-low). Parameter `PROGRAM`
-    (default `build/program.hex`).
--   `src/riscv_cpu.v`: PC, instruction ROM, `cpu_core`, data RAM, LED
-    register and the address decode above. Outputs `leds[3:0]` and
-    `debug_x3`.
+    active-low). Instantiates `riscv_cpu`, drives `led = ~leds` (Dock
+    LEDs are active-low) and the UART pins. Parameters `PROGRAM` (RAM
+    image prefix, default `build/program`), `BOOT_PROGRAM` (default
+    `build/boot.hex`), `RESET_PC`, `CLKS_PER_BIT` (234 = 27 MHz /
+    115200).
+-   `src/riscv_cpu.v`: PC, boot ROM, main RAM, `cpu_core`, LED register,
+    UART TX/RX with a one-byte RX buffer (cleared when the CPU's load
+    of the data register completes; newest byte wins on overrun), and
+    the address decode above. Fetch address is `reset ? RESET_PC :
+    next_pc`; a registered `fetch_from_boot` flag selects boot ROM or
+    RAM output.
 -   `src/cpu_core.v`: decoder, immediate generator, register file, ALU
     operand muxes, branch comparison, next-PC selection (pc+4, pc+imm,
-    (rs1+imm)&~1), store data replication + byte strobes, load
-    extraction/sign extension, write-back mux (ALU, load data, pc+4).
+    (rs1+imm)&~1, or hold during a load stall), store data replication
+    + byte strobes, load extraction/sign extension, write-back mux
+    (ALU, load data, pc+4). **Loads take two cycles**: `load_stall`
+    (first cycle) holds the PC and suppresses write-back;
+    `mem_read_done` (second cycle) writes back and tells I/O the read
+    completed.
+-   `src/main_mem.v`: 4096 words as four byte lanes
+    (`<prefix>.lane0..3.hex`), two synchronous ports: fetch (read only)
+    and data (read + byte-strobed write). Maps to BSRAM.
+-   `src/boot_rom.v`: 256 words, `$readmemh`, synchronous read. Maps to
+    BSRAM.
+-   `src/uart_tx.v`, `src/uart_rx.v`: 8N1, `CLKS_PER_BIT` parameter;
+    RX has a 2-flop synchronizer and a one-cycle `valid` pulse.
 -   `src/decoder.v`: full RV32I decode. Outputs `alu_operation[3:0]`,
     `alu_src_a` (rs1/pc/zero), `use_immediate`, `write_enable`,
     `wb_select` (ALU/mem/pc+4), `mem_read`, `mem_write`, `branch`, `jal`,
@@ -229,54 +231,72 @@ Other addresses read 0 and ignore writes.
 -   `src/alu.v`: 4-bit op: `0000 ADD, 0001 SUB, 0010 AND, 0011 OR,
     0100 XOR, 0101 SLL, 0110 SRL, 0111 SRA, 1000 SLT, 1001 SLTU`.
     Shifts use `b[4:0]`.
--   `src/pc.v`: PC register, loads `next_address`, reset to 0.
--   `src/instruction_mem.v`: ROM, `$readmemh(INIT_FILE)`, 1024 words.
-    **Synchronous read**, addressed with `next_pc` (0 during reset), so
-    the registered output matches the PC loaded on the same edge. This
-    is what lets it map to BSRAM.
--   `src/data_mem.v`: 256 words as four byte lanes, async read, sync
-    write with byte strobes. Maps to `RAM16SDP4`.
+-   `src/pc.v`: PC register, loads `next_address`, resets to
+    `RESET_ADDRESS`.
 -   `src/regfile.v`: 32 × 32, two async read ports, **no reset**
     (zeroed by an `initial` block at configuration/simulation start).
     Maps to `RAM16SDP4`. `x0` reads zero. `debug_x3` port kept for
     testbenches.
--   `src/blink.v`: old LED blink test, not built. The single-LED blink
-    top is in git history (commit `b33ebcf` or earlier).
+-   `src/blink.v`: old LED blink test, not built.
 
-### Why the ROM is synchronous and the register file has no reset
+### Why memories are synchronous and the register file has no reset
 
 The first full-RV32I build used 68% of the LUTs and failed 27 MHz
-(26.35 MHz). Yosys could not put an async-read ROM in BSRAM and built
-a 1024 × 32 mux tree; the register file's reset loop forced 1024 DFFs
-plus per-register write logic (~8,500 cells). After the two changes
-the design is ~6,100 cells, ~5,000 LUT4 (24%), 160 `RAM16SDP4`,
-2 BSRAM, and nextpnr reports ~54 MHz. Keep both properties unless
-there is a reason to pay that cost.
+(26.35 MHz): Yosys could not put an async-read ROM in BSRAM and built a
+1024 × 32 mux tree, and the register file's reset loop forced 1024 DFFs
+plus per-register write logic. Making the ROM synchronous and dropping
+the register reset fixed it. The current design keeps the same rule
+for all memories (RAM fetch and data ports, boot ROM), which is why
+loads take two cycles.
+
+Current build (`./build.sh`, `led_counter.S` preloaded, 2026-10-05):
+3,231 LUT4 (15%), 206 ALU, 418 DFF, 32 `RAM16SDP4` (register file),
+17 BSRAM (36%: 16 KB RAM + boot ROM), 8 IOB. nextpnr: 55.20 MHz max after routing
+(PASS at 27 MHz).
 
 ### Known limitations
 
 -   Misaligned loads/stores are not trapped (undefined results).
 -   No traps, interrupts, CSRs; FENCE/ECALL/EBREAK are no-ops.
--   The ROM cannot be read with loads (Harvard), so constants come from
-    `li`, not from data tables in `.text`.
--   No linker: `la`, `call`, `.data` are rejected by `asm2hex.py`.
+-   No `M` extension: clang emits calls to `__mulsi3`, `__divsi3`, etc.,
+    provided by `sw/runtime.c`.
+-   The boot ROM cannot be read with loads, so the bootloader uses no
+    `.rodata`/`.data`/`.bss` (`sw/boot.ld` asserts this).
+-   UART RX buffer is one byte; the bootloader's `getc` loop keeps up at
+    115200, but a slow program can drop bytes.
 
 ------------------------------------------------------------------------
 
-## Programs and assembly workflow
+## Programs and software workflow
 
--   `tools/asm2hex.py prog.S out.hex`: runs `llvm-mc -triple=riscv32
-    -mattr=-c,-relax -filetype=obj`, fails on any `R_RISCV` relocation,
-    extracts `.text` with `llvm-objcopy`, writes one little-endian word
-    per line, pads to 1024 words with NOPs (`00000013`). Finds LLVM via
-    `$LLVM_MC`/`$LLVM_OBJDUMP`/`$LLVM_OBJCOPY`, then `brew --prefix
-    llvm`, then `PATH`.
--   `programs/led_counter.S`: default demo; counts 0-15 on the LEDs
-    (~0.2 s per step) using a `delay` subroutine and the stack.
+-   `tools/mkprog.py -o build/NAME src.c [more.S ...]`: compiles with
+    Homebrew `clang --target=riscv32-unknown-elf -march=rv32i
+    -mabi=ilp32 -O2 -ffreestanding -nostdlib -msmall-data-limit=0
+    -mno-relax`, links `sw/crt0.S` + `sw/runtime.c` + sources with
+    `sw/link.ld` (16 KB RAM at 0, stack at top, asserts ≥1 KB stack)
+    using `zig ld.lld`, and writes `NAME.elf`, `NAME.bin`,
+    `NAME.lane0..3.hex`. `--boot` links with `sw/boot.ld` at `0x10000`
+    without crt0 and writes `NAME.hex` (256 words, NOP-padded).
+-   Programs define `main` (assembly: `.globl main`). crt0 sets `sp`,
+    clears `.bss` (RAM survives resets/uploads) and calls `main`.
+-   `sw/rvcpu.h`: `LED_REG`, `UART_DATA`, `UART_STATUS`, `led_set`,
+    `uart_putc/getc/puts/put_hex/put_dec`, `uart_has_data`.
+-   `programs/boot.S`: bootloader. Prints `RVBOOT\r\n`, waits ~0.5 s for
+    `'L' len:u32 bytes sum:u32` (load at RAM 0, reply `K`/`E`) or `'R'`
+    (run); on timeout runs RAM. Jumps to 0 with `jr zero`.
+-   `tools/upload.py prog.c|prog.S|image.bin`: builds via mkprog, waits
+    for `RVBOOT` (user presses S0), sends the `L` packet, checks `K`,
+    then monitors the UART (keys are sent). `--monitor`,
+    `--no-monitor`, `--port`. Standard library only (no pyserial).
+-   `programs/hello.c`: UART greeting, factorials 1-10,
+    `1000000 / 7`, `names[2]` (rodata pointer table), then echo with a
+    character count on the LEDs.
+-   `programs/led_counter.S`: default preloaded program; counts 0-15 on
+    the LEDs (~0.2 s per step).
 -   `programs/rv32i_test.S`: self-checking test. Uses `t6` as check
-    counter, `t5` as result (`0x600D` pass, `0xBAD` fail), `t4` scratch.
-    Pass: LEDs `1111` steady. Fail: failing check number (low 4 bits)
-    blinks.
+    counter, `t5` as result (`0x600D` pass, `0xBAD` fail), `t4` scratch,
+    a 16-byte `.bss` buffer for loads/stores. Pass: LEDs `1111` steady.
+    Fail: failing check number (low 4 bits) blinks.
 -   `programs/basic.S`: the original 4-instruction program
     (x1=10, x2=3, x3=13, x4=7).
 
@@ -284,53 +304,64 @@ there is a reason to pay that cost.
 
 ## Simulation status
 
-`./test.sh` assembles the test programs and runs every testbench; it
-exits non-zero on any `FAIL`. Current output:
+`./test.sh` builds the test programs and runs every testbench; it
+exits non-zero on any `FAIL`. Current output (2026-10-05):
 
 ``` text
 ALU TB: ALL TESTS PASSED
+BOOT TB: ALL TESTS PASSED
 CPU_CORE TB: ALL TESTS PASSED
 DECODER TB: ALL TESTS PASSED
 regfile_tb: ran (no self-check)
 RISCV_CPU TB: ALL TESTS PASSED
-RV32I TB: ALL TESTS PASSED (57 checks, 253 cycles)
+RV32I TB: ALL TESTS PASSED (57 checks, 292 cycles)
 TOP TB: ALL TESTS PASSED
+UART TB: ALL TESTS PASSED
 ```
 
--   `tb/rv32i_tb.v`: runs `rv32i_test.S`, waits for `t5` to become
-    `0x600D`/`0xBAD` (note `li t5, 0x600D` is lui+addi, so don't stop
-    at the first non-zero value). Verified to catch a deliberately
-    broken `sra` (fails at check 12).
--   `tb/top_tb.v`: same program through `top`; checks LED pins
-    (`0000` = all lit on pass, `1111` while S0 held, `0000` after rerun).
+-   `tb/rv32i_tb.v`: runs `rv32i_test.S` from RAM (`RESET_PC = 0`),
+    waits for `t5` to become `0x600D`/`0xBAD` (note `li t5, 0x600D` is
+    lui+addi, so don't stop at the first non-zero value). Verified
+    (previous design) to catch a deliberately broken `sra`.
+-   `tb/boot_tb.v`: end to end through `top` with `CLKS_PER_BIT = 8`:
+    `RVBOOT`, upload of `build/hello.bin`, `K`, then the greeting. RAM
+    starts with `build/basic`, so the greeting proves the upload.
+-   `tb/uart_tb.v`: `uart_tx` → `uart_rx` loopback.
+-   `tb/top_tb.v`: `rv32i_test.S` through `top` starting in RAM; checks
+    LED pins (`0000` = all lit on pass, `1111` while S0 held, `0000`
+    after rerun).
 -   `tb/decoder_tb.v`: every RV32I instruction plus reserved encodings.
 -   `tb/cpu_core_tb.v`: drives the core directly: write-back, next-PC
-    for branches/jumps, store strobes, load sign extension.
+    for branches/jumps, store strobes, two-cycle load, sign extension.
 -   `tb/alu_tb.v`: every ALU op. `tb/regfile_tb.v`: prints only.
--   `tb/riscv_cpu_tb.v`: `basic.S`, checks x1-x4 and `debug_x3`.
-
-Hand-written instruction encodings in the testbenches were verified
-against `llvm-mc -show-encoding`.
+-   `tb/riscv_cpu_tb.v`: `basic.S` (after crt0), checks x1-x4 and
+    `debug_x3`.
 
 ------------------------------------------------------------------------
 
-## Build
+## Build and run
 
 ``` bash
-./build.sh                        # programs/led_counter.S
-./build.sh programs/rv32i_test.S  # any program
+./build.sh                        # preload programs/led_counter.S
+./build.sh programs/hello.c       # preload any program
 openFPGALoader -b tangprimer20k build/cpu.fs
+tools/upload.py programs/hello.c  # then press S0
 ```
 
-`build.sh` assembles the program into `build/program.hex`, then
+`build.sh` builds `build/boot.hex` and `build/program.lane*.hex`, then
 Yosys (`synth_gowin`), nextpnr-himbaechel (`--device
 GW2A-LV18PG256C8/I7 --vopt family=GW2A-18 --vopt
 cst=src/tang_primer_20k.cst --freq 27`) and `gowin_pack -d GW2A-18`.
 The CST is passed to nextpnr only, not gowin_pack. Place and route
-takes a few minutes.
+takes a few minutes; prefer `upload.py` to try programs.
 
 `--freq 27` matters: without it nextpnr checks timing against a 12 MHz
 default, which hid the earlier 26.35 MHz failure.
+
+Hardware check procedure used on 2026-10-05: start a UART listener on
+the second `/dev/cu.usbserial-*` port, then load the bitstream; `RVBOOT`
+appears right after configuration (no S0 needed). For uploads, start
+`upload.py` and ask the user to press S0.
 
 ------------------------------------------------------------------------
 
@@ -423,8 +454,9 @@ Apicula has a historical Tang Primer 20K issue concerning clocked
 designs not running correctly on hardware after open-source
 synthesis/P&R.
 
-The 27 MHz blink design and the RV32I CPU both run correctly on
-hardware, so this is not currently a problem. If a larger clocked design programs
+The 27 MHz blink design, the original RV32I CPU and the current
+CPU + UART + bootloader design all run correctly on hardware, so this
+is not currently a problem. If a larger clocked design programs
 successfully (`Done Final`) but misbehaves, consider it then.
 
 ------------------------------------------------------------------------
@@ -472,29 +504,36 @@ Avoid these unless new evidence requires them:
 5.  Do not treat stale `project_files.txt` as the actual source tree.
 6.  Do not claim the FPGA is ready to program merely because JTAG
     IDCODE is detected.
-7.  Do not overstate hardware verification: on hardware,
-    `rv32i_test.S` passing (LEDs steady on) and the LED counter demo
-    have been observed. Finer details are verified in simulation only.
+7.  Do not overstate hardware verification. Observed on hardware:
+    previous design: `rv32i_test.S` pass (LEDs steady on) and the LED
+    counter; current design (2026-10-05): `RVBOOT`, UART upload with
+    `K`, `hello.c` output and UART echo. Everything else is verified in
+    simulation only.
 8.  Do not drive the Dock LEDs without inverting: they are active-low.
-9.  Do not make the instruction ROM async-read or add a reset loop to
-    the register file without checking resource use and timing (see
-    "Why the ROM is synchronous...").
+9.  Do not make the memories async-read or add a reset loop to the
+    register file without checking resource use and timing (see
+    "Why memories are synchronous...").
+11. Do not put `.rodata`/`.data`/`.bss` in the bootloader: the boot ROM
+    is fetch-only.
+12. Do not assume the UART port name: it is the higher-numbered
+    `/dev/cu.usbserial-*` of the pair and depends on the USB port.
 10. Do not build without `--freq 27`; the default constraint is 12 MHz.
 
 ------------------------------------------------------------------------
 
 # Next steps
 
-Done: full RV32I on the FPGA, assembly-to-ROM workflow, self-test passing
-on hardware.
+Done: full RV32I on the FPGA, UART, UART bootloader, C/assembly
+toolchain with a linker script (`.data`, `la`, `call`), 16 KB RAM,
+software mul/div; bootloader, upload and `hello.c` verified on hardware.
 
 Possible next steps:
 
--   UART output (print results instead of reading LEDs)
--   load programs over UART without rebuilding the bitstream
--   a linker script so `.data`, `la` and `call` work (needs `ld.lld`)
+-   re-run `rv32i_test.S` on the board with the current design
+    (`tools/upload.py programs/rv32i_test.S`, then watch the LEDs)
 -   traps and `Zicsr`; then `ECALL`/`EBREAK`
--   the `M` extension (multiply/divide)
+-   the `M` extension (multiply/divide) to replace `sw/runtime.c`
+-   a larger UART RX FIFO
 -   pipelining, once the single-cycle design is the bottleneck
 
 ------------------------------------------------------------------------
@@ -539,5 +578,5 @@ hardware execution failure
 
 They are different problems.
 
-Current state: no open failure. The RV32I CPU runs on hardware and
-passes its self-test.
+Current state: no open failure. The RV32I CPU with UART and bootloader
+runs on hardware; uploaded C programs run and talk over the UART.

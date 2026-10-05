@@ -13,3 +13,10 @@ IO_LOC "led[2]" N14;
 IO_PORT "led[2]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 IO_LOC "led[3]" N16;
 IO_PORT "led[3]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// UART to the Dock's USB debugger (second serial port on the host).
+// Same pins as Sipeed's TangPrimer-20K-example UART_HELLO.
+IO_LOC "uart_tx" M11;
+IO_PORT "uart_tx" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
+IO_LOC "uart_rx" T13;
+IO_PORT "uart_rx" IO_TYPE=LVCMOS33 PULL_MODE=UP;

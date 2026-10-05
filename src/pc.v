@@ -1,4 +1,6 @@
-module pc (
+module pc #(
+    parameter RESET_ADDRESS = 32'd0
+) (
     input wire clk,
     input wire reset,
     input wire [31:0] next_address,
@@ -6,7 +8,7 @@ module pc (
 );
     always @(posedge clk) begin
         if (reset)
-            address <= 32'd0;
+            address <= RESET_ADDRESS;
         else
             address <= next_address;
     end

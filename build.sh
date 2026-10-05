@@ -1,11 +1,15 @@
 #!/bin/bash
-# Build an FPGA bitstream running a RISC-V program.
+# Build the FPGA bitstream: bootloader in the boot ROM, plus a program
+# preloaded in RAM (run after the bootloader's 0.5 s upload window).
 #
-#   ./build.sh                       # programs/led_counter.S
-#   ./build.sh programs/foo.S        # any self-contained RV32I program
+#   ./build.sh                          # preload programs/led_counter.S
+#   ./build.sh programs/hello.c         # preload any program (.S or .c)
 #
 # Output: build/cpu.fs
 # Load:   openFPGALoader -b tangprimer20k build/cpu.fs
+#
+# Programs can also be sent over UART without rebuilding:
+#   tools/upload.py programs/hello.c
 
 set -e
 
@@ -13,11 +17,13 @@ PROGRAM=${1:-programs/led_counter.S}
 
 mkdir -p build
 
-tools/asm2hex.py "$PROGRAM" build/program.hex
+tools/mkprog.py --boot -o build/boot programs/boot.S
+tools/mkprog.py -o build/program "$PROGRAM"
 
 yosys -p \
-"read_verilog src/pc.v src/instruction_mem.v src/data_mem.v src/decoder.v \
-   src/imm_gen.v src/regfile.v src/alu.v src/cpu_core.v src/riscv_cpu.v src/top.v;
+"read_verilog src/pc.v src/main_mem.v src/boot_rom.v src/uart_tx.v src/uart_rx.v \
+   src/decoder.v src/imm_gen.v src/regfile.v src/alu.v src/cpu_core.v \
+   src/riscv_cpu.v src/top.v;
  hierarchy -top top;
  synth_gowin -top top -json build/cpu.json"
 

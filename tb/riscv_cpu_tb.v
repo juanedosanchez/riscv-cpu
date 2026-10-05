@@ -10,11 +10,14 @@ module riscv_cpu_tb;
     integer errors;
 
     riscv_cpu #(
-        .PROGRAM("build/basic.hex")
+        .PROGRAM("build/basic"),
+        .RESET_PC(32'd0)
     ) uut (
         .clk(clk),
         .reset(reset),
         .leds(),
+        .uart_tx(),
+        .uart_rx(1'b1),
         .debug_x3(debug_x3)
     );
 
@@ -44,8 +47,9 @@ module riscv_cpu_tb;
 
         reset = 0;
 
-        // 4 instructions + margin (programs/basic.S then loops in place)
-        #50;
+        // crt0 (stack + .bss clear) and the 4 instructions, then basic.S
+        // loops in place
+        #500;
 
         check_reg(1, uut.core.register_file.registers[1], 32'd10);
         check_reg(2, uut.core.register_file.registers[2], 32'd3);

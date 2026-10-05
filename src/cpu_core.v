@@ -1,5 +1,9 @@
-// Single-cycle RV32I datapath: decode, register file, ALU, branch/jump
-// target selection, and load/store alignment. Memories live outside.
+// RV32I datapath: decode, register file, ALU, branch/jump target
+// selection, and load/store alignment. Memories live outside.
+//
+// Every instruction takes one cycle except loads, which take two: memory
+// reads are synchronous (block RAM), so the first cycle presents the
+// address and holds the PC, and the second writes back the data.
 module cpu_core (
     input wire         clk,
     input wire         reset,
@@ -11,7 +15,8 @@ module cpu_core (
     output wire [31:0] mem_address,
     output wire [31:0] mem_write_data,
     output wire [3:0]  mem_write_strobe,
-    input wire  [31:0] mem_read_data,
+    input wire  [31:0] mem_read_data,     // valid in a load's 2nd cycle
+    output wire        mem_read_done,     // load completing this cycle
 
     output wire [31:0] debug_x3
 );
@@ -42,6 +47,19 @@ module cpu_core (
 
     reg  [31:0] load_data;
     reg  [31:0] write_back;
+
+    // Load stall: first cycle of a load waits for the synchronous read
+    reg  load_wait;
+    wire load_stall = mem_read && !load_wait;
+
+    always @(posedge clk) begin
+        if (reset)
+            load_wait <= 1'b0;
+        else
+            load_wait <= load_stall;
+    end
+
+    assign mem_read_done = mem_read && load_wait;
 
     decoder decoder_unit (
         .instruction(instruction),
@@ -75,7 +93,7 @@ module cpu_core (
         .data2(data2),
         .rd(rd),
         .write_data(write_back),
-        .write_enable(write_enable),
+        .write_enable(write_enable && !load_stall),
         .debug_x3(debug_x3)
     );
 
@@ -111,7 +129,8 @@ module cpu_core (
     wire [31:0] pc_plus_4 = pc + 32'd4;
     wire [31:0] pc_target = pc + immediate;
 
-    assign next_pc = jalr                      ? {alu_result[31:1], 1'b0} :
+    assign next_pc = load_stall                ? pc :
+                     jalr                      ? {alu_result[31:1], 1'b0} :
                      (jal || (branch && branch_taken)) ? pc_target :
                                                  pc_plus_4;
 
