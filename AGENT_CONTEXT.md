@@ -10,8 +10,8 @@ The project is a hand-built minimal RISC-V CPU in Verilog targeting a
 Sipeed Tang Primer 20K FPGA.
 
 **An RV32I CPU runs on the FPGA at 27 MHz** with a 16 KB main RAM, a
-1 KB boot ROM holding a UART bootloader, a UART (115200 8N1) and four
-LEDs. Programs are written in C or assembly, linked with `ld.lld`
+1 KB boot ROM holding a UART bootloader, a UART (115200 8N1), four
+LEDs, four buttons (S1-S4) and a free-running cycle counter. Programs are written in C or assembly, linked with `ld.lld`
 (from Zig) into RAM images, and either preloaded in the bitstream or
 uploaded over UART with `tools/upload.py` without rebuilding.
 
@@ -21,6 +21,12 @@ prints `RVBOOT`, `upload.py programs/hello.c` uploads (reply `K`),
 echoes typed characters. `rv32i_test.S` (57 checks) passes in
 simulation with the current design; on hardware it was verified only
 with the previous design (2026-10-01, 4 KB ROM, no UART).
+
+2026-10-06: buttons S1-S4 and a cycle counter were added, the LED pins
+were moved to sit with the buttons, and `programs/topo.S`
+(whack-a-mole) runs on the board, preloaded in the bitstream. The user
+played it and set the button/LED pairing; that is the only hardware
+use of the buttons so far (no other hardware test of them).
 
 The next objectives are in "Next steps".
 
@@ -52,17 +58,23 @@ Board:
 Current constraints:
 
 ``` text
-clock     H11
-button    T10 (S0, active-low)
-led[3:0]  N16 N14 L14 L16 (Dock LED2-LED5, active-low)
-uart_tx   M11 (FPGA -> host)
-uart_rx   T13 (host -> FPGA)
+clock      H11
+reset      T10 (S0, active-low)
+uart_tx    M11 (FPGA -> host)
+uart_rx    T13 (host -> FPGA)
+
+bit        0    1    2    3
+btn_n[i]   T3   T2   D7   C7    (S1-S4, active-low, LVCMOS15 bank)
+led[i]     N14  N16  A13  C13   (active-low)
 ```
 
-LED pins match Sipeed's TangPrimer-20K-example HDMI demo; UART pins
-match its UART demo. The Dock LEDs are **active-low** (verified on
-hardware: driving `x3[3:0] = 1101` directly lit only LED4). Dock
-LED0/LED1 (`C13`, `A13`) are not used. See `src/tang_primer_20k.cst`.
+Button bit *i* and LED bit *i* are paired: each LED sits with its
+button (the user chose this layout for `topo.S` on 2026-10-06). `L16`
+and `L14`, used before, are no longer connected. Button pins match
+Sipeed's LiteX example for the Dock; UART pins match Sipeed's UART
+demo. The Dock LEDs are **active-low** (verified on hardware for the
+old pins; the user reported no inversion on the new ones). See
+`src/tang_primer_20k.cst`.
 
 Apicula's device table explicitly identifies Tang Primer 20K as:
 
@@ -188,23 +200,28 @@ RV32I. One instruction per 27 MHz cycle, except loads (two cycles).
 | `0x1000_0000` | 1 word | LED register, bits `[3:0]`, read/write |
 | `0x1000_0004` | 1 word | UART data: write sends a byte, read takes the received byte |
 | `0x1000_0008` | 1 word | UART status: bit 0 TX ready, bit 1 RX byte available |
+| `0x1000_000C` | 1 word | Buttons, bits `[3:0]` = S1-S4, 1 = pressed (read only, not debounced) |
+| `0x1000_0010` | 1 word | Cycle counter, 27 MHz, wraps every ~159 s (read only) |
 
 Reset PC is `0x0001_0000` (`RESET_PC` parameter). Other addresses read
 0 and ignore writes. I/O registers decode on `mem_address[31:28] == 1`
-and `mem_address[3:2]`, so they are mirrored within `0x1xxx_xxxx`.
+and `mem_address[4:2]`, so they are mirrored within `0x1xxx_xxxx`.
 
 ### Modules
 
 -   `src/top.v`: FPGA top. 16-cycle power-on reset plus S0 (`btn_n0`,
     active-low). Instantiates `riscv_cpu`, drives `led = ~leds` (Dock
-    LEDs are active-low) and the UART pins. Parameters `PROGRAM` (RAM
+    LEDs are active-low), passes `buttons = ~btn_n` (S1-S4) and
+    connects the UART pins. Parameters `PROGRAM` (RAM
     image prefix, default `build/program`), `BOOT_PROGRAM` (default
     `build/boot.hex`), `RESET_PC`, `CLKS_PER_BIT` (234 = 27 MHz /
     115200).
 -   `src/riscv_cpu.v`: PC, boot ROM, main RAM, `cpu_core`, LED register,
     UART TX/RX with a one-byte RX buffer (cleared when the CPU's load
-    of the data register completes; newest byte wins on overrun), and
-    the address decode above. Fetch address is `reset ? RESET_PC :
+    of the data register completes; newest byte wins on overrun), a
+    2-flop synchronizer for the buttons (no debounce: programs do it),
+    a 32-bit cycle counter cleared by reset, and the address decode
+    above. Fetch address is `reset ? RESET_PC :
     next_pc`; a registered `fetch_from_boot` flag selects boot ROM or
     RAM output.
 -   `src/cpu_core.v`: decoder, immediate generator, register file, ALU
@@ -249,10 +266,10 @@ the register reset fixed it. The current design keeps the same rule
 for all memories (RAM fetch and data ports, boot ROM), which is why
 loads take two cycles.
 
-Current build (`./build.sh`, `led_counter.S` preloaded, 2026-10-05):
-3,231 LUT4 (15%), 206 ALU, 418 DFF, 32 `RAM16SDP4` (register file),
-17 BSRAM (36%: 16 KB RAM + boot ROM), 8 IOB. nextpnr: 55.20 MHz max after routing
-(PASS at 27 MHz).
+Current build (`./build.sh programs/topo.S`, 2026-10-06): 3,433 LUT4
+(16%), 246 ALU, 458 DFF, 32 `RAM16SDP4` (register file), 17 BSRAM
+(36%: 16 KB RAM + boot ROM), 12 IOB. nextpnr: 61.85 MHz max after
+routing (PASS at 27 MHz).
 
 ### Known limitations
 
@@ -279,8 +296,10 @@ Current build (`./build.sh`, `led_counter.S` preloaded, 2026-10-05):
     without crt0 and writes `NAME.hex` (256 words, NOP-padded).
 -   Programs define `main` (assembly: `.globl main`). crt0 sets `sp`,
     clears `.bss` (RAM survives resets/uploads) and calls `main`.
--   `sw/rvcpu.h`: `LED_REG`, `UART_DATA`, `UART_STATUS`, `led_set`,
-    `uart_putc/getc/puts/put_hex/put_dec`, `uart_has_data`.
+-   `sw/rvcpu.h`: `LED_REG`, `UART_DATA`, `UART_STATUS`, `BUTTONS`,
+    `CYCLES`, `CYCLES_PER_MS`, `BUTTON_S1..S4`, `led_set`,
+    `buttons_read`, `cycles_read`, `uart_putc/getc/puts/put_hex/put_dec`,
+    `uart_has_data`.
 -   `programs/boot.S`: bootloader. Prints `RVBOOT\r\n`, waits ~0.5 s for
     `'L' len:u32 bytes sum:u32` (load at RAM 0, reply `K`/`E`) or `'R'`
     (run); on timeout runs RAM. Jumps to 0 with `jr zero`.
@@ -291,6 +310,22 @@ Current build (`./build.sh`, `led_counter.S` preloaded, 2026-10-05):
 -   `programs/hello.c`: UART greeting, factorials 1-10,
     `1000000 / 7`, `names[2]` (rodata pointer table), then echo with a
     character count on the LEDs.
+-   `programs/topo.S`: whack-a-mole in assembly (the game currently on
+    the board). Idle: LEDs alternate 0101/1010 until any button. A
+    random LED (one-hot, never the same twice in a row) lights; its
+    paired button must be pressed within the window (1.2 s, shrinking
+    by 1/8 per hit to 0.3 s). Wrong button or timeout = miss (all LEDs
+    flash); 3 misses = game over (3 flashes, then score low 4 bits on
+    the LEDs until a button starts a new game). Hits, misses and the
+    score are printed on the UART. Times come from the cycle counter
+    (`.equ MS, 27000`); random numbers from a 32-bit Galois LFSR mixed
+    with the cycle counter at each pick. Decimal printing uses repeated
+    subtraction (no M extension). Simulated with a scripted player
+    (MS = 20) in a testbench that is not in the repository.
+-   `programs/topo.c`: old UART echo placeholder, untracked; not the
+    game.
+-   `programs/io_test.S`: used by `tb/io_tb.v`; checks two back-to-back
+    cycle counter reads differ by 2, then copies buttons to LEDs.
 -   `programs/led_counter.S`: default preloaded program; counts 0-15 on
     the LEDs (~0.2 s per step).
 -   `programs/rv32i_test.S`: self-checking test. Uses `t6` as check
@@ -305,13 +340,14 @@ Current build (`./build.sh`, `led_counter.S` preloaded, 2026-10-05):
 ## Simulation status
 
 `./test.sh` builds the test programs and runs every testbench; it
-exits non-zero on any `FAIL`. Current output (2026-10-05):
+exits non-zero on any `FAIL`. Current output (2026-10-06):
 
 ``` text
 ALU TB: ALL TESTS PASSED
 BOOT TB: ALL TESTS PASSED
 CPU_CORE TB: ALL TESTS PASSED
 DECODER TB: ALL TESTS PASSED
+IO TB: ALL TESTS PASSED
 regfile_tb: ran (no self-check)
 RISCV_CPU TB: ALL TESTS PASSED
 RV32I TB: ALL TESTS PASSED (57 checks, 292 cycles)
@@ -327,6 +363,8 @@ UART TB: ALL TESTS PASSED
     `RVBOOT`, upload of `build/hello.bin`, `K`, then the greeting. RAM
     starts with `build/basic`, so the greeting proves the upload.
 -   `tb/uart_tb.v`: `uart_tx` → `uart_rx` loopback.
+-   `tb/io_tb.v`: runs `io_test.S`; cycle counter delta = 2, LEDs
+    follow the buttons.
 -   `tb/top_tb.v`: `rv32i_test.S` through `top` starting in RAM; checks
     LED pins (`0000` = all lit on pass, `1111` while S0 held, `0000`
     after rerun).
@@ -343,6 +381,7 @@ UART TB: ALL TESTS PASSED
 
 ``` bash
 ./build.sh                        # preload programs/led_counter.S
+./build.sh programs/topo.S        # preload the whack-a-mole game
 ./build.sh programs/hello.c       # preload any program
 openFPGALoader -b tangprimer20k build/cpu.fs
 tools/upload.py programs/hello.c  # then press S0
@@ -506,10 +545,13 @@ Avoid these unless new evidence requires them:
     IDCODE is detected.
 7.  Do not overstate hardware verification. Observed on hardware:
     previous design: `rv32i_test.S` pass (LEDs steady on) and the LED
-    counter; current design (2026-10-05): `RVBOOT`, UART upload with
-    `K`, `hello.c` output and UART echo. Everything else is verified in
-    simulation only.
+    counter; 2026-10-05 design: `RVBOOT`, UART upload with `K`,
+    `hello.c` output and UART echo; current design (2026-10-06):
+    `RVBOOT`, upload, an assembly echo program, and `topo.S` played
+    by the user. Everything else is verified in simulation only.
 8.  Do not drive the Dock LEDs without inverting: they are active-low.
+    Do not move the LED or button pins without asking: the pairing
+    (T3-N14, T2-N16, D7-A13, C7-C13) was chosen by the user.
 9.  Do not make the memories async-read or add a reset loop to the
     register file without checking resource use and timing (see
     "Why memories are synchronous...").
@@ -525,10 +567,13 @@ Avoid these unless new evidence requires them:
 
 Done: full RV32I on the FPGA, UART, UART bootloader, C/assembly
 toolchain with a linker script (`.data`, `la`, `call`), 16 KB RAM,
-software mul/div; bootloader, upload and `hello.c` verified on hardware.
+software mul/div, buttons and cycle counter; bootloader, upload,
+`hello.c` and the `topo.S` whack-a-mole game run on hardware.
 
 Possible next steps:
 
+-   add the topo testbench (scripted player, `MS` scaled down) to
+    `tb/` and `test.sh`
 -   re-run `rv32i_test.S` on the board with the current design
     (`tools/upload.py programs/rv32i_test.S`, then watch the LEDs)
 -   traps and `Zicsr`; then `ECALL`/`EBREAK`
@@ -578,5 +623,7 @@ hardware execution failure
 
 They are different problems.
 
-Current state: no open failure. The RV32I CPU with UART and bootloader
-runs on hardware; uploaded C programs run and talk over the UART.
+Current state: no open failure. The RV32I CPU with UART, bootloader,
+buttons and cycle counter runs on hardware; the board runs the
+`topo.S` whack-a-mole game (preloaded in `build/cpu.fs`; SRAM
+configuration, so reload with openFPGALoader after a power cycle).
