@@ -15,12 +15,13 @@ LEDs, four buttons (S1-S4) and a free-running cycle counter. Programs are writte
 (from Zig) into RAM images, and either preloaded in the bitstream or
 uploaded over UART with `tools/upload.py` without rebuilding.
 
-Verified on hardware 2026-10-05 with the current design: bootloader
+Verified on hardware 2026-10-05 (before buttons): bootloader
 prints `RVBOOT`, `upload.py programs/hello.c` uploads (reply `K`),
 `hello.c` prints correct output (including software mul/div) and
 echoes typed characters. `rv32i_test.S` (57 checks) passes in
-simulation with the current design; on hardware it was verified only
-with the previous design (2026-10-01, 4 KB ROM, no UART).
+simulation and, on 2026-10-06, on the board with the current design
+(uploaded with `upload.py`; all four LEDs steady on, reported by the
+user).
 
 2026-10-06: buttons S1-S4 and a cycle counter were added, the LED pins
 were moved to sit with the buttons, and `programs/topo.S`
@@ -316,8 +317,11 @@ routing (PASS at 27 MHz).
     paired button must be pressed within the window (1.2 s, shrinking
     by 1/8 per hit to 0.3 s). Wrong button or timeout = miss (all LEDs
     flash); 3 misses = game over (3 flashes, then score low 4 bits on
-    the LEDs until a button starts a new game). Hits, misses and the
-    score are printed on the UART. Times come from the cycle counter
+    the LEDs until a button starts a new game). UART text is in
+    Spanish (UTF-8, user request 2026-10-06): instructions with the
+    button/LED pairing in Dock names (S4-LED0, S3-LED1, S2-LED2,
+    S1-LED3) at start-up, then hits, misses ("Fallos: N de 3"; the
+    "3" is in the string, not taken from `LIVES`) and the score. Times come from the cycle counter
     (`.equ MS, 27000`); random numbers from a 32-bit Galois LFSR mixed
     with the cycle counter at each pick. Decimal printing uses repeated
     subtraction (no M extension). Tested by `tb/topo_tb.v`.
@@ -561,8 +565,9 @@ Avoid these unless new evidence requires them:
     previous design: `rv32i_test.S` pass (LEDs steady on) and the LED
     counter; 2026-10-05 design: `RVBOOT`, UART upload with `K`,
     `hello.c` output and UART echo; current design (2026-10-06):
-    `RVBOOT`, upload, an assembly echo program, and `topo.S` played
-    by the user. Everything else is verified in simulation only.
+    `RVBOOT`, upload, an assembly echo program, `rv32i_test.S` pass
+    and `topo.S` played by the user, booting from SPI flash.
+    Everything else is verified in simulation only.
 8.  Do not drive the Dock LEDs without inverting: they are active-low.
     Do not move the LED or button pins without asking: the pairing
     (T3-N14, T2-N16, D7-A13, C7-C13) was chosen by the user.
@@ -586,8 +591,6 @@ software mul/div, buttons and cycle counter; bootloader, upload,
 
 Possible next steps:
 
--   re-run `rv32i_test.S` on the board with the current design
-    (`tools/upload.py programs/rv32i_test.S`, then watch the LEDs)
 -   traps and `Zicsr`; then `ECALL`/`EBREAK`
 -   the `M` extension (multiply/divide) to replace `sw/runtime.c`
 -   a larger UART RX FIFO

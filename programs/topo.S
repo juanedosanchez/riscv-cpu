@@ -2,6 +2,7 @@
 #
 #   button  S1/T3  S2/T2  S3/D7  S4/C7      (BUTTONS bit 0..3)
 #   LED     N14    N16    A13    C13        (LED_REG bit 0..3)
+#   Dock    LED3   LED2   LED1   LED0       (silkscreen names)
 #
 # Idle: LEDs alternate 0101/1010; press any button to start.
 # A random LED (the mole) lights up; press the button under it before
@@ -9,7 +10,8 @@
 # WINDOW_MIN). A wrong button or a timeout is a miss: all LEDs flash.
 # After LIVES misses the game is over: LEDs flash three times, then
 # show the score (low 4 bits) until a button is pressed for a new game.
-# Hits, misses and the final score are also printed on the UART.
+# The UART shows instructions at start-up and reports hits, misses and
+# the final score, in Spanish (UTF-8).
 #
 # Registers kept across the game:
 #   s0 = I/O base, s1 = random state, s2 = score, s3 = misses,
@@ -115,6 +117,12 @@ wrong:
 miss:
     call puts
     addi s3, s3, 1
+    la   a0, msg_misses             # "Fallos: N de 3"
+    call puts
+    mv   a0, s3
+    call print_dec
+    la   a0, msg_of_lives
+    call puts
     li   a0, 2
     call flash
     li   t0, LIVES
@@ -270,11 +278,35 @@ print_dec:
     .p2align 2
 powers_of_10: .word 1000, 100, 10, 1, 0
 
-msg_title: .asciz "\r\nTOPO - whack-a-mole\r\nPress any button to start\r\n"
-msg_go:    .asciz "Go!\r\n"
-msg_hit:   .asciz "Hit! Score: "
-msg_late:  .asciz "Too slow!\r\n"
-msg_wrong: .asciz "Wrong button!\r\n"
-msg_over:  .asciz "Game over. Score: "
-msg_again: .asciz "\r\nPress any button to play again\r\n"
-msg_crlf:  .asciz "\r\n"
+msg_title:
+    .ascii "\r\n"
+    .ascii "=== TOPO - ¡Golpea al topo! ===\r\n"
+    .ascii "\r\n"
+    .ascii "Cada LED tiene su botón:\r\n"
+    .ascii "  S4 -> LED0\r\n"
+    .ascii "  S3 -> LED1\r\n"
+    .ascii "  S2 -> LED2\r\n"
+    .ascii "  S1 -> LED3\r\n"
+    .ascii "\r\n"
+    .ascii "Cómo jugar:\r\n"
+    .ascii "  1. Mientras los LED parpadean, pulsa cualquier botón para empezar.\r\n"
+    .ascii "  2. Se enciende un LED: es el topo. Pulsa su botón antes de que\r\n"
+    .ascii "     se esconda.\r\n"
+    .ascii "  3. Cada acierto suma un punto y te da menos tiempo\r\n"
+    .ascii "     (de 1,2 s a 0,3 s).\r\n"
+    .ascii "  4. Si pulsas otro botón o tardas demasiado, es un fallo y\r\n"
+    .ascii "     parpadean todos los LED.\r\n"
+    .ascii "  5. Con 3 fallos se acaba la partida. Los LED muestran tus puntos\r\n"
+    .ascii "     en binario: LED0 = 8, LED1 = 4, LED2 = 2, LED3 = 1.\r\n"
+    .ascii "  6. Pulsa cualquier botón para jugar otra vez. S0 reinicia la placa.\r\n"
+    .ascii "\r\n"
+    .asciz "Pulsa cualquier botón para empezar.\r\n"
+msg_go:       .asciz "\r\n¡A jugar!\r\n"
+msg_hit:      .asciz "¡Golpe! Puntos: "
+msg_late:     .asciz "¡Demasiado lento! "
+msg_wrong:    .asciz "¡Botón equivocado! "
+msg_misses:   .asciz "Fallos: "
+msg_of_lives: .asciz " de 3\r\n"
+msg_over:     .asciz "\r\nFin de la partida. Puntos: "
+msg_again:    .asciz "\r\nPulsa cualquier botón para jugar otra vez.\r\n"
+msg_crlf:     .asciz "\r\n"

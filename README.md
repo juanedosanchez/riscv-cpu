@@ -31,17 +31,17 @@ Hardware verification history:
 
 -   2026-10-01, previous design (4 KB instruction ROM, no UART):
     `rv32i_test.S` passed on the board (all four LEDs steady on).
--   2026-10-05, current design: the bootloader prints `RVBOOT` after
+-   2026-10-05 (before buttons): the bootloader prints `RVBOOT` after
     configuration and after S0; `tools/upload.py programs/hello.c`
     uploaded 2097 bytes (`K` reply); `hello.c` printed correct
     factorials and `1000000 / 7 = 142857 remainder 1`; typed characters
-    were echoed back. `rv32i_test.S` has not yet been re-run on the
-    board with the current design (it passes in simulation).
+    were echoed back.
 -   2026-10-06, buttons and cycle counter added, LED pins moved:
     `topo.S` preloaded in the bitstream and played on the board; the
     button/LED pairing below was checked by playing it. The bitstream
     was then written to SPI flash, and the board boots into the game on
-    power-up.
+    power-up. `rv32i_test.S`, uploaded over the UART, passed on the
+    board (all four LEDs steady on).
 
 ## Hardware
 
@@ -275,8 +275,10 @@ and LEDs. Each LED sits with one button (see "FPGA top").
     show the score (low 4 bits, binary) until a button starts a new
     game.
 
-Hits, misses and the score are also printed on the UART
-(`tools/upload.py --monitor`). Run it with:
+The UART (`tools/upload.py --monitor`) shows the instructions in
+Spanish at start-up, including which button goes with which LED
+(S4-LED0, S3-LED1, S2-LED2, S1-LED3), then reports each hit, each
+miss (with the miss count) and the final score. The text is UTF-8. Run it with:
 
 ``` bash
 ./build.sh programs/topo.S && openFPGALoader -b tangprimer20k build/cpu.fs
@@ -289,6 +291,27 @@ starts on power-up (see "Programming").
 
 Timing comes from the cycle counter, randomness from a 32-bit LFSR
 mixed with the cycle counter (so the player's timing seeds it).
+
+### Seeing the game's UART output
+
+The UART goes through the Dock's USB debugger, the same USB-C port
+used for programming. To see the output, plug that port into a
+computer; with only a power supply, the game still plays on the LEDs
+but there is no text. No project tools are needed: open any serial
+terminal on the **second** of the two serial ports the debugger
+creates, at **115200 baud, 8N1**.
+
+| Computer | Port | Command / program |
+|---|---|---|
+| macOS | `/dev/cu.usbserial-XXXX1` (higher number) | `screen /dev/cu.usbserial-XXXX1 115200` (quit: Ctrl-A, then K) |
+| Linux | usually `/dev/ttyUSB1` | `screen /dev/ttyUSB1 115200` or `picocom -b 115200 /dev/ttyUSB1` |
+| Windows | higher of the two COM ports (Device Manager) | PuTTY: Serial, that COM port, speed 115200 |
+| With this repo | detected automatically | `tools/upload.py --monitor` |
+
+The title is printed only at start-up, so a terminal opened later
+misses it; hits, misses and the score still appear while playing.
+Press **S0** to restart: the bootloader prints `RVBOOT`, and about
+0.5 s later the game prints its title again.
 
 ## Bootloader and uploading
 
@@ -583,7 +606,6 @@ all running on hardware.
 
 Possible next steps:
 
--   Re-run `rv32i_test.S` on the board with the current design.
 -   Traps and the `Zicsr` extension; then `ECALL`/`EBREAK`.
 -   The `M` extension (multiply/divide) to replace `sw/runtime.c`.
 -   Pipelining, once the single-cycle design is the bottleneck.
