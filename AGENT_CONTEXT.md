@@ -320,8 +320,9 @@ routing (PASS at 27 MHz).
     score are printed on the UART. Times come from the cycle counter
     (`.equ MS, 27000`); random numbers from a 32-bit Galois LFSR mixed
     with the cycle counter at each pick. Decimal printing uses repeated
-    subtraction (no M extension). Simulated with a scripted player
-    (MS = 20) in a testbench that is not in the repository.
+    subtraction (no M extension). Tested by `tb/topo_tb.v`.
+    Written to the board's SPI flash (2026-10-06): it boots into the
+    game on power-up (verified by the user).
 -   `programs/topo.c`: old UART echo placeholder, untracked; not the
     game.
 -   `programs/io_test.S`: used by `tb/io_tb.v`; checks two back-to-back
@@ -352,6 +353,7 @@ regfile_tb: ran (no self-check)
 RISCV_CPU TB: ALL TESTS PASSED
 RV32I TB: ALL TESTS PASSED (57 checks, 292 cycles)
 TOP TB: ALL TESTS PASSED
+TOPO TB: ALL TESTS PASSED
 UART TB: ALL TESTS PASSED
 ```
 
@@ -365,6 +367,12 @@ UART TB: ALL TESTS PASSED
 -   `tb/uart_tb.v`: `uart_tx` → `uart_rx` loopback.
 -   `tb/io_tb.v`: runs `io_test.S`; cycle counter delta = 2, LEDs
     follow the buttons.
+-   `tb/topo_tb.v`: runs `topo.S` with a scripted player. `test.sh`
+    builds `build/topo_sim` from a copy of `topo.S` with `.equ MS`
+    changed from 27000 to 20 (and fails if that substitution stops
+    matching). Checks: 10 hits = score 10, wrong button and timeout
+    count as misses, game over shows the score on the LEDs, a button
+    starts a new game with score 0. About 2 M cycles, ~5 s.
 -   `tb/top_tb.v`: `rv32i_test.S` through `top` starting in RAM; checks
     LED pins (`0000` = all lit on pass, `1111` while S0 held, `0000`
     after rerun).
@@ -383,9 +391,15 @@ UART TB: ALL TESTS PASSED
 ./build.sh                        # preload programs/led_counter.S
 ./build.sh programs/topo.S        # preload the whack-a-mole game
 ./build.sh programs/hello.c       # preload any program
-openFPGALoader -b tangprimer20k build/cpu.fs
+openFPGALoader -b tangprimer20k build/cpu.fs      # SRAM: lost on power-off
+openFPGALoader -b tangprimer20k -f build/cpu.fs   # SPI flash: boots on power-up
 tools/upload.py programs/hello.c  # then press S0
 ```
+
+The flash currently holds the `topo.S` bitstream (written 2026-10-06;
+it replaced Sipeed's factory demo). An SRAM load runs until the next
+power cycle, then the board boots from flash again. A program uploaded
+with `upload.py` lasts until the next power cycle as well.
 
 `build.sh` builds `build/boot.hex` and `build/program.lane*.hex`, then
 Yosys (`synth_gowin`), nextpnr-himbaechel (`--device
@@ -572,8 +586,6 @@ software mul/div, buttons and cycle counter; bootloader, upload,
 
 Possible next steps:
 
--   add the topo testbench (scripted player, `MS` scaled down) to
-    `tb/` and `test.sh`
 -   re-run `rv32i_test.S` on the board with the current design
     (`tools/upload.py programs/rv32i_test.S`, then watch the LEDs)
 -   traps and `Zicsr`; then `ECALL`/`EBREAK`
@@ -625,5 +637,5 @@ They are different problems.
 
 Current state: no open failure. The RV32I CPU with UART, bootloader,
 buttons and cycle counter runs on hardware; the board runs the
-`topo.S` whack-a-mole game (preloaded in `build/cpu.fs`; SRAM
-configuration, so reload with openFPGALoader after a power cycle).
+`topo.S` whack-a-mole game, written to SPI flash, so it boots on
+power-up.

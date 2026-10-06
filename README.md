@@ -39,7 +39,9 @@ Hardware verification history:
     board with the current design (it passes in simulation).
 -   2026-10-06, buttons and cycle counter added, LED pins moved:
     `topo.S` preloaded in the bitstream and played on the board; the
-    button/LED pairing below was checked by playing it.
+    button/LED pairing below was checked by playing it. The bitstream
+    was then written to SPI flash, and the board boots into the game on
+    power-up.
 
 ## Hardware
 
@@ -125,6 +127,7 @@ riscv-cpu/
     ├── top_tb.v
     ├── uart_tb.v
     ├── io_tb.v
+    ├── topo_tb.v
     └── boot_tb.v
 ```
 
@@ -281,6 +284,9 @@ Hits, misses and the score are also printed on the UART
 tools/upload.py programs/topo.S     # then press S0
 ```
 
+The board's flash currently holds the Topo bitstream, so the game
+starts on power-up (see "Programming").
+
 Timing comes from the cycle counter, randomness from a 32-bit LFSR
 mixed with the cycle counter (so the player's timing seeds it).
 
@@ -315,9 +321,9 @@ the highest-numbered `/dev/cu.usbserial-*` port (the UART channel);
 ./test.sh
 ```
 
-builds the bootloader and `basic.S`, `rv32i_test.S`, `hello.c` and
-`io_test.S`, then
-runs every testbench in `tb/`:
+builds the bootloader and `basic.S`, `rv32i_test.S`, `hello.c`,
+`io_test.S` and a fast copy of `topo.S`, then runs every testbench in
+`tb/`:
 
 ``` text
 ALU TB: ALL TESTS PASSED
@@ -329,6 +335,7 @@ regfile_tb: ran (no self-check)
 RISCV_CPU TB: ALL TESTS PASSED
 RV32I TB: ALL TESTS PASSED (57 checks, 292 cycles)
 TOP TB: ALL TESTS PASSED
+TOPO TB: ALL TESTS PASSED
 UART TB: ALL TESTS PASSED
 ```
 
@@ -343,6 +350,9 @@ UART TB: ALL TESTS PASSED
 -   `io_tb.v` runs `io_test.S`: two back-to-back cycle counter reads
     differ by 2 (a load takes two cycles), and the LEDs follow the
     buttons.
+-   `topo_tb.v` plays Topo with a scripted player: hits, a wrong
+    button, timeouts, game over and a new game. `test.sh` builds it
+    from `topo.S` with 1 "ms" = 20 cycles instead of 27000.
 -   `top_tb.v` runs `rv32i_test.S` through the FPGA top (starting in
     RAM) and checks the LED pins, including the reset button.
 -   `decoder_tb.v`, `alu_tb.v` and `cpu_core_tb.v` check the units
@@ -471,8 +481,18 @@ openFPGALoader -b tangprimer20k --write-sram build/cpu.fs
 ```
 
 This works: the bitstream loads, the FPGA reports `Done Final`, and
-the design runs. SRAM configuration is lost on power-off; reload after
-each power cycle.
+the design runs. SRAM configuration is lost on power-off.
+
+To keep a design across power cycles, write it to the board's SPI
+flash; the FPGA loads it on power-up:
+
+``` bash
+openFPGALoader -b tangprimer20k -f build/cpu.fs
+```
+
+The flash currently holds the Topo bitstream (2026-10-06; it replaced
+Sipeed's factory demo). An SRAM load lasts until the next power cycle,
+then the board boots from flash again.
 
 ### Requirement: Dock DIP switch 1 down
 
@@ -563,7 +583,6 @@ all running on hardware.
 
 Possible next steps:
 
--   Add a Topo testbench (scripted player) to `tb/` and `test.sh`.
 -   Re-run `rv32i_test.S` on the board with the current design.
 -   Traps and the `Zicsr` extension; then `ECALL`/`EBREAK`.
 -   The `M` extension (multiply/divide) to replace `sw/runtime.c`.
