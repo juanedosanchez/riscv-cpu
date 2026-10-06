@@ -31,7 +31,8 @@ module boot_tb;
         .btn_n0(btn_n0),
         .led(led),
         .uart_tx(board_tx),
-        .uart_rx(host_tx)
+        .uart_rx(host_tx),
+        .btn_n(4'b1111)
     );
 
     always #5 clk = ~clk;

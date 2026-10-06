@@ -4,14 +4,16 @@ IO_PORT "clk27" IO_TYPE=LVCMOS33;
 IO_LOC "btn_n0" T10;
 IO_PORT "btn_n0" IO_TYPE=LVCMOS33;
 
-// Dock LEDs, same pins as Sipeed's TangPrimer-20K-example HDMI demo
-IO_LOC "led[0]" L16;
+// Dock LEDs, active-low. Ordered to sit with the buttons for programs/topo.S:
+// led[0] N14 (with T3), led[1] N16 (T2), led[2] A13 (D7), led[3] C13 (C7).
+// L16 and L14 are no longer used.
+IO_LOC "led[0]" N14;
 IO_PORT "led[0]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
-IO_LOC "led[1]" L14;
+IO_LOC "led[1]" N16;
 IO_PORT "led[1]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
-IO_LOC "led[2]" N14;
+IO_LOC "led[2]" A13;
 IO_PORT "led[2]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
-IO_LOC "led[3]" N16;
+IO_LOC "led[3]" C13;
 IO_PORT "led[3]" IO_TYPE=LVCMOS33 PULL_MODE=UP;
 
 // UART to the Dock's USB debugger (second serial port on the host).
@@ -20,3 +22,14 @@ IO_LOC "uart_tx" M11;
 IO_PORT "uart_tx" IO_TYPE=LVCMOS33 PULL_MODE=UP DRIVE=8;
 IO_LOC "uart_rx" T13;
 IO_PORT "uart_rx" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// Dock buttons S1..S4 (active-low), same pins as Sipeed's LiteX example
+// for the Dock. They are in a 1.5 V bank, hence LVCMOS15.
+IO_LOC "btn_n[0]" T3;
+IO_PORT "btn_n[0]" IO_TYPE=LVCMOS15;
+IO_LOC "btn_n[1]" T2;
+IO_PORT "btn_n[1]" IO_TYPE=LVCMOS15;
+IO_LOC "btn_n[2]" D7;
+IO_PORT "btn_n[2]" IO_TYPE=LVCMOS15;
+IO_LOC "btn_n[3]" C7;
+IO_PORT "btn_n[3]" IO_TYPE=LVCMOS15;

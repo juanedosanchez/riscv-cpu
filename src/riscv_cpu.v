@@ -6,6 +6,8 @@
 //   0x1000_0000  LED register, bits [3:0] (read/write)
 //   0x1000_0004  UART data: write = send byte, read = take received byte
 //   0x1000_0008  UART status: bit 0 = TX ready, bit 1 = RX byte available
+//   0x1000_000C  buttons, bits [3:0] = S1..S4, 1 = pressed (read only)
+//   0x1000_0010  cycle counter, 27 MHz, wraps every ~159 s (read only)
 module riscv_cpu #(
     parameter PROGRAM      = "build/program",   // main RAM image prefix
     parameter BOOT_PROGRAM = "build/boot.hex",
@@ -17,6 +19,7 @@ module riscv_cpu #(
     output wire [3:0]  leds,
     output wire        uart_tx,
     input wire         uart_rx,
+    input wire  [3:0]  buttons,         // 1 = pressed, asynchronous
     output wire [31:0] debug_x3
 );
 
@@ -77,9 +80,11 @@ module riscv_cpu #(
     // Data address decode
     wire ram_select  = (mem_address[31:16] == 16'h0000);
     wire io_select   = (mem_address[31:28] == 4'h1);
-    wire led_select  = io_select && (mem_address[3:2] == 2'd0);
-    wire uart_data   = io_select && (mem_address[3:2] == 2'd1);
-    wire uart_status = io_select && (mem_address[3:2] == 2'd2);
+    wire led_select    = io_select && (mem_address[4:2] == 3'd0);
+    wire uart_data     = io_select && (mem_address[4:2] == 3'd1);
+    wire uart_status   = io_select && (mem_address[4:2] == 3'd2);
+    wire button_select = io_select && (mem_address[4:2] == 3'd3);
+    wire cycle_select  = io_select && (mem_address[4:2] == 3'd4);
 
     wire [31:0] ram_read_data;
 
@@ -146,6 +151,25 @@ module riscv_cpu #(
             rx_full <= 1'b0;
     end
 
+    // Buttons: synchronized only; programs debounce in software
+    reg [3:0] buttons_meta = 4'd0;
+    reg [3:0] buttons_sync = 4'd0;
+
+    always @(posedge clk) begin
+        buttons_meta <= buttons;
+        buttons_sync <= buttons_meta;
+    end
+
+    // Cycle counter
+    reg [31:0] cycle_count;
+
+    always @(posedge clk) begin
+        if (reset)
+            cycle_count <= 32'd0;
+        else
+            cycle_count <= cycle_count + 32'd1;
+    end
+
     // Load data (used in the load's second cycle)
     always @(*) begin
         if (ram_select)
@@ -156,6 +180,10 @@ module riscv_cpu #(
             mem_read_data = {24'd0, rx_buffer};
         else if (uart_status)
             mem_read_data = {30'd0, rx_full, !tx_busy};
+        else if (button_select)
+            mem_read_data = {28'd0, buttons_sync};
+        else if (cycle_select)
+            mem_read_data = cycle_count;
         else
             mem_read_data = 32'd0;
     end

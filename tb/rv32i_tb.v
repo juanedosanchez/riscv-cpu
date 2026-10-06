@@ -21,6 +21,7 @@ module rv32i_tb;
         .leds(leds),
         .uart_tx(),
         .uart_rx(1'b1),
+        .buttons(4'b0000),
         .debug_x3()
     );
 

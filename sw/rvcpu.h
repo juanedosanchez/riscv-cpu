@@ -7,11 +7,27 @@
 #define LED_REG      (*(volatile uint32_t *)0x10000000)
 #define UART_DATA    (*(volatile uint32_t *)0x10000004)
 #define UART_STATUS  (*(volatile uint32_t *)0x10000008)
+#define BUTTONS      (*(volatile uint32_t *)0x1000000C)
+#define CYCLES       (*(volatile uint32_t *)0x10000010)
 
 #define UART_TX_READY 0x1
 #define UART_RX_VALID 0x2
 
+#define CYCLES_PER_MS 27000         // 27 MHz clock
+
+// Button bits in BUTTONS (1 = pressed; not debounced)
+#define BUTTON_S1 0x1
+#define BUTTON_S2 0x2
+#define BUTTON_S3 0x4
+#define BUTTON_S4 0x8
+
 static inline void led_set(uint32_t value) { LED_REG = value; }
+
+static inline uint32_t buttons_read(void) { return BUTTONS & 0xF; }
+
+// Free-running 27 MHz counter; wraps every ~159 s. Differences between
+// two reads are correct across a wrap as long as they are under 159 s.
+static inline uint32_t cycles_read(void) { return CYCLES; }
 
 static inline void uart_putc(char c)
 {

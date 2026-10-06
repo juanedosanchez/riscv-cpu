@@ -18,6 +18,7 @@ module riscv_cpu_tb;
         .leds(),
         .uart_tx(),
         .uart_rx(1'b1),
+        .buttons(4'b0000),
         .debug_x3(debug_x3)
     );
 

@@ -10,6 +10,7 @@ tools/mkprog.py --boot -o build/boot programs/boot.S        > /dev/null
 tools/mkprog.py -o build/basic      programs/basic.S         > /dev/null
 tools/mkprog.py -o build/rv32i_test programs/rv32i_test.S    > /dev/null
 tools/mkprog.py -o build/hello      programs/hello.c         > /dev/null
+tools/mkprog.py -o build/io_test    programs/io_test.S       > /dev/null
 
 SOURCES="src/pc.v src/main_mem.v src/boot_rom.v src/uart_tx.v src/uart_rx.v
          src/decoder.v src/imm_gen.v src/regfile.v src/alu.v src/cpu_core.v

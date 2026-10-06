@@ -20,7 +20,8 @@ module top_tb;
         .btn_n0(btn_n0),
         .led(led),
         .uart_tx(),
-        .uart_rx(1'b1)
+        .uart_rx(1'b1),
+        .btn_n(4'b1111)
     );
 
     always #5 clk = ~clk;

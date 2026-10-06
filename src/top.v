@@ -5,7 +5,8 @@ module top #(
     parameter CLKS_PER_BIT = 234
 ) (
     input wire clk27,
-    input wire btn_n0,
+    input wire btn_n0,                      // S0: reset
+    input wire [3:0] btn_n,                 // S1..S4, active-low
     output wire [3:0] led,
     output wire uart_tx,
     input wire uart_rx
@@ -36,6 +37,7 @@ module top #(
         .leds(cpu_leds),
         .uart_tx(uart_tx),
         .uart_rx(uart_rx),
+        .buttons(~btn_n),
         .debug_x3()
     );
 
